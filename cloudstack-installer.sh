@@ -319,85 +319,79 @@ allow_unauthenticated_repos() {
 
 # Função para configurar o fuso horário
 configure_timezone() {
-    echo -e "\n${BLUE}=== Configurando fuso horário ===${NC}"
     log "Configurando fuso horário"
     
-    # Lista de fusos horários comuns no Brasil
+    echo -e "\n${BLUE}=== Configuração de Fuso Horário ===${NC}"
     echo -e "${YELLOW}Selecione o fuso horário:${NC}"
-    echo "1) America/Sao_Paulo (Brasília, São Paulo, Rio de Janeiro - UTC-3)"
-    echo "2) America/Recife (Recife, Nordeste - UTC-3)"
-    echo "3) America/Manaus (Manaus, Amazonas - UTC-4)"
-    echo "4) America/Rio_Branco (Rio Branco, Acre - UTC-5)"
-    echo "5) America/Noronha (Fernando de Noronha - UTC-2)"
-    echo "6) Outro (informar manualmente)"
-    
+    echo -e "1) America/Sao_Paulo (Recomendado)"
+    echo -e "2) America/Recife"
+    echo -e "3) America/Fortaleza"
+    echo -e "4) America/Maceio"
+    echo -e "5) America/Bahia"
+    echo -e "6) America/Manaus"
+    echo -e "7) America/Cuiaba"
+    echo -e "8) America/Campo_Grande"
     read -p "Escolha o fuso horário [1]: " TZ_CHOICE
     TZ_CHOICE=${TZ_CHOICE:-1}
     
     case $TZ_CHOICE in
         1) TIMEZONE="America/Sao_Paulo" ;;
         2) TIMEZONE="America/Recife" ;;
-        3) TIMEZONE="America/Manaus" ;;
-        4) TIMEZONE="America/Rio_Branco" ;;
-        5) TIMEZONE="America/Noronha" ;;
-        6)
-            echo -e "${YELLOW}Digite o fuso horário (ex: America/Sao_Paulo):${NC}"
-            read -p "Fuso horário: " TIMEZONE
-            ;;
+        3) TIMEZONE="America/Fortaleza" ;;
+        4) TIMEZONE="America/Maceio" ;;
+        5) TIMEZONE="America/Bahia" ;;
+        6) TIMEZONE="America/Manaus" ;;
+        7) TIMEZONE="America/Cuiaba" ;;
+        8) TIMEZONE="America/Campo_Grande" ;;
         *) TIMEZONE="America/Sao_Paulo" ;;
     esac
     
-    # Verifica se o fuso horário é válido
-    if ! timedatectl list-timezones | grep -q "^$TIMEZONE$"; then
-        echo -e "${RED}Fuso horário inválido: $TIMEZONE${NC}"
-        log "Fuso horário inválido: $TIMEZONE"
-        echo -e "${YELLOW}Usando fuso horário padrão: America/Sao_Paulo${NC}"
-        TIMEZONE="America/Sao_Paulo"
+    echo -e "Configurando fuso horário para ${GREEN}$TIMEZONE${NC}"
+    timedatectl set-timezone $TIMEZONE
+    
+    # Verifica se o NTP está ativo
+    if ! timedatectl | grep -q "NTP service: active"; then
+        echo -e "${YELLOW}Serviço NTP não está ativo. Ativando...${NC}"
+        timedatectl set-ntp true
     fi
     
-    # Configura o fuso horário
-    echo -e "${BLUE}Configurando fuso horário para: $TIMEZONE${NC}"
-    log "Configurando fuso horário para: $TIMEZONE"
+    # Exibe a hora atual
+    CURRENT_TIME=$(date)
+    echo -e "Hora atual: ${GREEN}$CURRENT_TIME${NC}"
     
-    if ! timedatectl set-timezone "$TIMEZONE"; then
-        echo -e "${RED}Falha ao configurar fuso horário.${NC}"
-        log "Falha ao configurar fuso horário"
+    # Verifica se o fuso horário foi configurado corretamente
+    CONFIGURED_TZ=$(timedatectl | grep "Time zone" | awk '{print $3}')
+    if [ "$CONFIGURED_TZ" != "$TIMEZONE" ]; then
+        echo -e "${RED}Falha ao configurar o fuso horário. Configurado: $CONFIGURED_TZ, Esperado: $TIMEZONE${NC}"
         echo -e "${YELLOW}Tentando método alternativo...${NC}"
         
         # Método alternativo
-        if ! ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime; then
-            echo -e "${RED}Falha ao configurar fuso horário usando método alternativo.${NC}"
-            log "Falha ao configurar fuso horário usando método alternativo"
-            return 1
+        ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
+        
+        # Verifica novamente
+        CONFIGURED_TZ=$(timedatectl | grep "Time zone" | awk '{print $3}')
+        if [ "$CONFIGURED_TZ" != "$TIMEZONE" ]; then
+            echo -e "${RED}Falha ao configurar o fuso horário pelo método alternativo.${NC}"
+            echo -e "${YELLOW}Por favor, configure manualmente o fuso horário após a instalação.${NC}"
+        else
+            echo -e "${GREEN}Fuso horário configurado com sucesso pelo método alternativo.${NC}"
         fi
+    else
+        echo -e "${GREEN}Fuso horário configurado com sucesso.${NC}"
     fi
-    
-    # Configura o NTP
-    echo -e "${BLUE}Configurando serviço NTP...${NC}"
-    log "Configurando serviço NTP"
-    
-    # Instala o chrony se não estiver instalado
-    if ! command -v chronyd &> /dev/null; then
-        echo -e "${YELLOW}Instalando chrony para sincronização de tempo...${NC}"
-        log "Instalando chrony"
-        safe_apt_get install -y chrony
-    fi
-    
-    # Reinicia o serviço chrony
-    systemctl restart chrony
-    
-    # Verifica o status do NTP
-    echo -e "${BLUE}Status do serviço NTP:${NC}"
-    timedatectl status | grep "NTP"
-    
-    echo -e "${GREEN}Fuso horário configurado com sucesso: $TIMEZONE${NC}"
-    log "Fuso horário configurado com sucesso: $TIMEZONE"
-    
-    # Adiciona o fuso horário ao arquivo de informações
-    TIMEZONE_INFO="$TIMEZONE"
-    
-    return 0
 }
+
+# Função para configurar o hostname
+configure_hostname() {
+    log "Configurando hostname"
+    
+    # Define o hostname
+    hostnamectl set-hostname $FULL_HOSTNAME
+    
+    echo -e "${GREEN}Hostname configurado: $FULL_HOSTNAME${NC}"
+}
+
+configure_hostname
 
 configure_timezone
 
@@ -412,7 +406,7 @@ ${BLUE} ╚═════╝╚══════╝ ╚═════╝  ╚
 ${GREEN}                                                                 v4.20.0.0 (LTS)${NC}
 "
 
-echo -e "${BLUE}=== Instalador CloudStack 4.20.0.0 (LTS) ===${NC}"
+echo -e "${BLUE}=== Instalador CloudStack 4.20.0.0 ===${NC}"
 echo -e "${YELLOW}Suporta: Ubuntu 20.xx, 22.04, 24.04${NC}"
 echo -e "${YELLOW}Baseado no trabalho original de Dewans Nehra (https://dewansnehra.xyz)${NC}\n"
 
@@ -457,56 +451,76 @@ echo -e "Adaptador: ${GREEN}$ADAPTER${NC}"
 # Configurações do Datacenter e Cluster (Lideri.cloud)
 echo -e "\n${BLUE}=== Configurações de Datacenter e Cluster (Lideri.cloud) ===${NC}"
 echo -e "${YELLOW}Selecione o datacenter:${NC}"
-echo -e "1) Olinda (OL) - 10.128.16.0/16"
-echo -e "2) São Paulo (SP) - 10.129.0.0/16"
-echo -e "3) Rio de Janeiro (RJ) - 10.130.0.0/16"
-echo -e "4) Recife (RE) - 10.131.0.0/16"
-echo -e "5) Belo Horizonte (BH) - 10.132.0.0/16"
+echo -e "1) Olinda (OLI) - 10.128.0.0/16"
+echo -e "2) Igarassu (IGA) - 10.129.0.0/16"
+echo -e "3) João Pessoa (JPA) - 10.130.0.0/16"
+echo -e "4) Recife (REC) - 10.131.0.0/16"
+echo -e "5) São Paulo (SAO) - 10.132.0.0/16"
+echo -e "6) Hostinger SP (HSP) - 10.133.0.0/16"
 read -p "Escolha o datacenter [1]: " DC_CHOICE
 DC_CHOICE=${DC_CHOICE:-1}
 
 case $DC_CHOICE in
-    1) DC_CODE="OL"; DC_NAME="Olinda"; DC_OCTET=128 ;;
-    2) DC_CODE="SP"; DC_NAME="São Paulo"; DC_OCTET=129 ;;
-    3) DC_CODE="RJ"; DC_NAME="Rio de Janeiro"; DC_OCTET=130 ;;
-    4) DC_CODE="RE"; DC_NAME="Recife"; DC_OCTET=131 ;;
-    5) DC_CODE="BH"; DC_NAME="Belo Horizonte"; DC_OCTET=132 ;;
-    *) DC_CODE="OL"; DC_NAME="Olinda"; DC_OCTET=128 ;;
+    1) DC_CODE="oli"; DC_NAME="Olinda"; DC_OCTET=128 ;;
+    2) DC_CODE="iga"; DC_NAME="Igarassu"; DC_OCTET=129 ;;
+    3) DC_CODE="jpa"; DC_NAME="João Pessoa"; DC_OCTET=130 ;;
+    4) DC_CODE="rec"; DC_NAME="Recife"; DC_OCTET=131 ;;
+    5) DC_CODE="spo"; DC_NAME="São Paulo"; DC_OCTET=132 ;;
+    6) DC_CODE="hsp"; DC_NAME="Hostinger SP"; DC_OCTET=133 ;;
+    *) DC_CODE="oli"; DC_NAME="Olinda"; DC_OCTET=128 ;;
 esac
 
 echo -e "Datacenter selecionado: ${GREEN}$DC_NAME ($DC_CODE)${NC}"
 
 # Seleciona o Cluster
-read -p "Número do Cluster (001-016) [001]: " CLUSTER_NUM
-CLUSTER_NUM=${CLUSTER_NUM:-001}
-CLUSTER_NUM=$(printf "%03d" $CLUSTER_NUM)
+echo -e "${YELLOW}Selecione o nome do cluster:${NC}"
+echo -e "1) bravo"
+echo -e "2) sierra"
+echo -e "3) delta"
+echo -e "4) charlie"
+echo -e "5) echo"
+read -p "Escolha o cluster [1]: " CLUSTER_NAME_CHOICE
+CLUSTER_NAME_CHOICE=${CLUSTER_NAME_CHOICE:-1}
+
+case $CLUSTER_NAME_CHOICE in
+    1) CLUSTER_NAME="bravo" ;;
+    2) CLUSTER_NAME="sierra" ;;
+    3) CLUSTER_NAME="delta" ;;
+    4) CLUSTER_NAME="charlie" ;;
+    5) CLUSTER_NAME="echo" ;;
+    *) CLUSTER_NAME="bravo" ;;
+esac
+
+read -p "Número do Cluster (01-16) [01]: " CLUSTER_NUM
+CLUSTER_NUM=${CLUSTER_NUM:-01}
+CLUSTER_NUM=$(printf "%02d" $((10#${CLUSTER_NUM})))
 
 # Calcula o terceiro octeto base para o cluster
 CLUSTER_ID=$((10#${CLUSTER_NUM}))
 if [ $CLUSTER_ID -lt 1 ] || [ $CLUSTER_ID -gt 16 ]; then
-    echo -e "${RED}Número de cluster inválido. Usando o padrão (001).${NC}"
+    echo -e "${RED}Número de cluster inválido. Usando o padrão (01).${NC}"
     CLUSTER_ID=1
-    CLUSTER_NUM="001"
+    CLUSTER_NUM="01"
 fi
 # Cálculo correto: clusters começam em 16, 32, 48, etc. (incrementos de 16)
 THIRD_OCTET=$(((($CLUSTER_ID-1)*16) + 16))
 
 # Seleciona o Servidor
-read -p "Número do Servidor (001-016) [001]: " SERVER_NUM
-SERVER_NUM=${SERVER_NUM:-001}
-SERVER_NUM=$(printf "%03d" $SERVER_NUM)
+read -p "Número do Servidor (01-16) [01]: " SERVER_NUM
+SERVER_NUM=${SERVER_NUM:-01}
+SERVER_NUM=$(printf "%02d" $((10#$SERVER_NUM)))
 
 # Calcula o IP com base nas regras da Lideri.cloud
-SERVER_ID=$((10#${SERVER_NUM}))
+SERVER_ID=$((10#$SERVER_NUM))
 if [ $SERVER_ID -lt 1 ] || [ $SERVER_ID -gt 16 ]; then
-    echo -e "${RED}Número de servidor inválido. Usando o padrão (001).${NC}"
+    echo -e "${RED}Número de servidor inválido. Usando o padrão (01).${NC}"
     SERVER_ID=1
-    SERVER_NUM="001"
+    SERVER_NUM="01"
 fi
 
 # Calcula o IP do servidor - o terceiro octeto é baseado no cluster e no número do servidor
-# Para o servidor 001 do cluster 001, seria 10.128.16.0/24
-# Para o servidor 002 do cluster 001, seria 10.128.17.0/24
+# Para o servidor 01 do cluster 01, seria 10.128.16.0/24
+# Para o servidor 02 do cluster 01, seria 10.128.17.0/24
 SERVER_OCTET=$((THIRD_OCTET + SERVER_ID - 1))
 
 # Calcula os IPs para a rede do servidor
@@ -526,8 +540,8 @@ MGMT_IP="10.$DC_OCTET.0.$SERVER_ID"
 echo -e "\n${BLUE}=== Configurações do Host ===${NC}"
 echo -e "${YELLOW}Seguindo padrão de nomenclatura Lideri.cloud${NC}"
 
-# Gera o nome do host conforme padrão FZ-C1-{DC}{CLUSTER}-{SERVER}
-HOSTNAME="FZ-C1-$DC_CODE$CLUSTER_NUM-$SERVER_NUM"
+# Gera o nome do host conforme padrão <cluster>.<node>.<zone>.lideri.cloud
+HOSTNAME="${CLUSTER_NAME}${CLUSTER_NUM}.node${SERVER_NUM}.${DC_CODE}"
 echo -e "Nome do Host: ${GREEN}$HOSTNAME${NC}"
 
 read -p "Domínio [lideri.cloud]: " DOMAIN
@@ -553,12 +567,14 @@ MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-cloudstack}
 echo -e "\n${BLUE}=== Resumo da Instalação ===${NC}"
 echo -e "Sistema: ${GREEN}$OS_TYPE $OS_VERSION${NC}"
 echo -e "Datacenter: ${GREEN}$DC_NAME ($DC_CODE)${NC}"
-echo -e "Cluster: ${GREEN}$CLUSTER_NUM${NC}"
-echo -e "Servidor: ${GREEN}$SERVER_NUM${NC}"
+echo -e "Cluster: ${GREEN}${CLUSTER_NAME}${CLUSTER_NUM}${NC}"
+echo -e "Servidor: ${GREEN}node${SERVER_NUM}${NC}"
 echo -e "Host: ${GREEN}$FULL_HOSTNAME${NC}"
 echo -e "Rede: ${GREEN}$IP_NETWORK${NC}"
 echo -e "IP do Servidor: ${GREEN}$IP_SERVER${NC}"
 echo -e "Gateway: ${GREEN}$IP_GATEWAY${NC}"
+echo -e "DNS Primário (Anycast): ${GREEN}$IP_DNS1${NC}"
+echo -e "DNS Secundário (Anycast): ${GREEN}$IP_DNS2${NC}"
 echo -e "IP de Gerenciamento (iDRAC/iLO): ${GREEN}$MGMT_IP${NC}"
 echo -e "Usuário MySQL: ${GREEN}$MYSQL_USER${NC}"
 echo -e "CloudStack: ${GREEN}4.20.0.0 (LTS)${NC}"
@@ -611,357 +627,99 @@ log "Pacotes básicos instalados com sucesso"
 echo -e "\n${BLUE}=== Configurando rede ===${NC}"
 log "Configurando rede"
 
-# Função para configurar o netplan
-configure_netplan() {
-    echo -e "\n${BLUE}=== Configurando rede ===${NC}"
+configure_network() {
     log "Configurando rede"
     
-    # Instala bridge-utils
-    echo -e "${BLUE}Instalando bridge-utils...${NC}"
-    log "Instalando bridge-utils"
-    safe_apt_get install -y bridge-utils
-    
-    echo -e "${BLUE}Configurando netplan...${NC}"
-    log "Configurando netplan"
-    
-    # Verifica se existem arquivos de configuração do netplan
-    NETPLAN_FILES=$(find /etc/netplan -name "*.yaml" -type f)
-    if [ -n "$NETPLAN_FILES" ]; then
-        echo -e "${YELLOW}Atenção: Foram encontrados arquivos de configuração do netplan:${NC}"
-        for file in $NETPLAN_FILES; do
-            echo -e "$(ls -la $file)"
-            
-            # Verifica se o arquivo contém configuração para a interface que queremos usar
-            if grep -q "$ADAPTER" "$file" || grep -q "br0" "$file"; then
-                echo -e "${YELLOW}Possível conflito detectado em $file:${NC}"
-                grep -A 10 -B 2 "$ADAPTER\|br0" "$file" | sed 's/^/    /'
-            fi
-        done
-        
-        echo -e "${YELLOW}Foram detectados possíveis conflitos com a interface $ADAPTER ou bridge br0.${NC}"
-        echo -e "${YELLOW}É altamente recomendado fazer backup e desativar os arquivos existentes.${NC}"
-        echo -e "1) Fazer backup e desativar permanentemente os arquivos existentes (recomendado)"
-        echo -e "2) Desativar temporariamente os arquivos existentes (apenas durante esta instalação)"
-        echo -e "3) Manter os arquivos existentes (pode causar conflitos)"
-        read -p "Escolha [1]: " NETPLAN_CHOICE
-        NETPLAN_CHOICE=${NETPLAN_CHOICE:-1}
-        
-        case $NETPLAN_CHOICE in
-            1)
-                echo -e "${BLUE}Fazendo backup e desativando permanentemente os arquivos existentes...${NC}"
-                log "Fazendo backup e desativando permanentemente os arquivos existentes do netplan"
-                for file in $NETPLAN_FILES; do
-                    backup_file "$file"
-                done
-                ;;
-            2)
-                echo -e "${BLUE}Desativando temporariamente os arquivos existentes...${NC}"
-                log "Desativando temporariamente os arquivos existentes do netplan"
-                TEMP_FILES=""
-                for file in $NETPLAN_FILES; do
-                    temp_file="${file}.temp.$$"
-                    mv "$file" "$temp_file"
-                    log "Arquivo $file movido temporariamente para $temp_file"
-                    TEMP_FILES="$TEMP_FILES $temp_file"
-                done
-                ;;
-            3)
-                echo -e "${YELLOW}Mantendo os arquivos existentes. Isso pode causar conflitos.${NC}"
-                log "Mantendo os arquivos existentes do netplan"
-                ;;
-            *)
-                echo -e "${BLUE}Fazendo backup e desativando permanentemente os arquivos existentes...${NC}"
-                log "Fazendo backup e desativando permanentemente os arquivos existentes do netplan"
-                for file in $NETPLAN_FILES; do
-                    backup_file "$file"
-                done
-                ;;
-        esac
-    fi
-    
-    # Cria o arquivo de configuração do netplan
-    NETPLAN_FILE="/etc/netplan/01-cloudstack-config.yaml"
-    log "Criando arquivo de configuração do netplan: $NETPLAN_FILE"
-    
-    # Detecta a interface física
-    PHYSICAL_IFACE=$(ip -o link show | grep -v lo | grep -v "br0\|docker\|veth\|virbr" | awk -F': ' '{print $2}' | head -n1)
-    if [ -z "$PHYSICAL_IFACE" ]; then
-        echo -e "${RED}Nenhuma interface física detectada.${NC}"
-        log "Nenhuma interface física detectada"
-        exit 1
-    fi
-    
-    echo -e "${BLUE}Interface física detectada: $PHYSICAL_IFACE${NC}"
-    log "Interface física detectada: $PHYSICAL_IFACE"
-    
-    # Verifica se br0 já existe
-    if ip link show br0 &>/dev/null; then
-        echo -e "${YELLOW}A interface br0 já existe. Verificando configuração...${NC}"
-        log "A interface br0 já existe"
-        
-        # Verifica se br0 já tem o IP correto
-        if ip addr show br0 | grep -q "inet.*$IP_SERVER"; then
-            echo -e "${GREEN}A interface br0 já está configurada com o IP $IP_SERVER.${NC}"
-            log "A interface br0 já está configurada com o IP $IP_SERVER"
-            echo -e "${YELLOW}Deseja manter a configuração atual? (s/n)${NC}"
-            read -p "Resposta: " KEEP_CONFIG
-            if [[ "$KEEP_CONFIG" =~ ^[Ss]$ ]]; then
-                echo -e "${GREEN}Mantendo a configuração atual.${NC}"
-                log "Mantendo a configuração atual"
-                # Pula a configuração do netplan
-                return 0
-            fi
-        fi
-    fi
-    
-    # Cria o arquivo de configuração do netplan
-    cat > "$NETPLAN_FILE" << EOF
+    # Verifica se o arquivo de interfaces existe
+    if [ ! -f /etc/netplan/00-installer-config.yaml ]; then
+        echo -e "${YELLOW}Arquivo de configuração de rede não encontrado. Criando um novo.${NC}"
+        cat > /etc/netplan/00-installer-config.yaml << EOF
 network:
   version: 2
   renderer: networkd
   ethernets:
-    $PHYSICAL_IFACE:
+    eth0:
       dhcp4: no
-      dhcp6: no
-  bridges:
-    $ADAPTER:
-      interfaces: [$PHYSICAL_IFACE]
-      dhcp4: no
-      dhcp6: no
       addresses: [$IP_SERVER/24]
-      routes:
-        - to: default
-          via: $IP_GATEWAY
+      gateway4: $IP_GATEWAY
       nameservers:
         addresses: [$IP_DNS1, $IP_DNS2]
 EOF
+    else
+        # Backup do arquivo original
+        cp /etc/netplan/00-installer-config.yaml /etc/netplan/00-installer-config.yaml.bak
+        
+        # Atualiza a configuração de rede
+        cat > /etc/netplan/00-installer-config.yaml << EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    eth0:
+      dhcp4: no
+      addresses: [$IP_SERVER/24]
+      gateway4: $IP_GATEWAY
+      nameservers:
+        addresses: [$IP_DNS1, $IP_DNS2]
+EOF
+    fi
     
-    chmod 600 "$NETPLAN_FILE"
-    log "Arquivo de configuração do netplan criado: $NETPLAN_FILE"
+    # Aplica a configuração
+    netplan apply
     
-    # Valida a configuração do netplan
-    echo -e "${BLUE}Validando configuração do netplan...${NC}"
-    log "Validando configuração do netplan: $NETPLAN_FILE"
-    if ! netplan try --timeout 30; then
-        echo -e "${RED}Erro na validação do netplan.${NC}"
-        log "Erro na validação do netplan"
-        echo -e "${YELLOW}Restaurando configuração anterior do netplan...${NC}"
+    # Verifica se a configuração foi aplicada corretamente
+    sleep 5
+    CURRENT_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+    if [ "$CURRENT_IP" != "$IP_SERVER" ]; then
+        echo -e "${RED}Falha ao aplicar configuração de rede. IP atual: $CURRENT_IP, IP esperado: $IP_SERVER${NC}"
+        echo -e "${YELLOW}Tentando configuração alternativa...${NC}"
         
-        # Restaura os arquivos originais
-        if [ "$NETPLAN_CHOICE" = "1" ]; then
-            for file in $NETPLAN_FILES; do
-                if [ -f "${file}.bak" ]; then
-                    mv "${file}.bak" "$file"
-                    log "Arquivo $file restaurado"
-                fi
-            done
-        elif [ "$NETPLAN_CHOICE" = "2" ]; then
-            for temp_file in $TEMP_FILES; do
-                original_file=$(echo "$temp_file" | sed 's/\.temp\.[0-9]\+$//')
-                mv "$temp_file" "$original_file"
-                log "Arquivo $original_file restaurado"
-            done
-        fi
+        # Tenta configuração alternativa
+        ip addr add $IP_SERVER/24 dev eth0
+        ip route add default via $IP_GATEWAY
         
-        rm -f "$NETPLAN_FILE"
-        log "Arquivo $NETPLAN_FILE removido"
-        
-        echo -e "${RED}Falha na validação do netplan. Verifique os logs e corrija a configuração.${NC}"
-        echo -e "${YELLOW}Deseja continuar mesmo assim? (s/n)${NC}"
-        read -p "Resposta: " CONTINUE_INSTALL
-        if [[ ! "$CONTINUE_INSTALL" =~ ^[Ss]$ ]]; then
-            echo -e "${RED}Instalação interrompida pelo usuário.${NC}"
-            log "Instalação interrompida devido a falha na validação do netplan"
-            exit 1
+        # Verifica novamente
+        sleep 2
+        CURRENT_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+        if [ "$CURRENT_IP" != "$IP_SERVER" ]; then
+            echo -e "${RED}Falha ao aplicar configuração de rede alternativa.${NC}"
+            echo -e "${YELLOW}Por favor, configure manualmente a rede após a instalação.${NC}"
+        else
+            echo -e "${GREEN}Configuração de rede alternativa aplicada com sucesso.${NC}"
         fi
     else
-        echo -e "${GREEN}Configuração do netplan validada com sucesso.${NC}"
-        log "Configuração do netplan validada com sucesso"
+        echo -e "${GREEN}Configuração de rede aplicada com sucesso.${NC}"
     fi
+    
+    # Atualiza o arquivo hosts
+    update_hosts_file
 }
 
-configure_netplan
+update_hosts_file() {
+    log "Atualizando arquivo hosts"
+    
+    # Backup do arquivo original
+    cp /etc/hosts /etc/hosts.bak
+    
+    # Cria um novo arquivo hosts
+    cat > /etc/hosts << EOF
+127.0.0.1       localhost
+$IP_SERVER      $FULL_HOSTNAME $HOSTNAME
 
-# Verifica se a bridge já existe
-if ! brctl show | grep -q 'br0'; then
-    log "Criando bridge br0"
-    brctl addbr br0
-    check_error "Falha ao criar bridge br0"
-fi
+# Servidores DNS Anycast da Lideri.cloud
+$IP_DNS1        dns1.lideri.cloud
+$IP_DNS2        dns2.lideri.cloud
 
-# Verifica se a interface já foi adicionada à bridge
-if ! brctl show br0 | grep -q "$ADAPTER"; then
-    log "Adicionando interface $ADAPTER à bridge br0"
-    brctl addif br0 $ADAPTER
-    check_error "Falha ao adicionar interface à bridge"
-fi
-
-# Função para validar o YAML do netplan
-validate_netplan() {
-    local yaml_file="$1"
-    local backup_file="$2"
+# The following lines are desirable for IPv6 capable hosts
+::1             localhost ip6-localhost ip6-loopback
+ff02::1         ip6-allnodes
+ff02::2         ip6-allrouters
+EOF
     
-    echo -e "${BLUE}Validando configuração do netplan...${NC}"
-    log "Validando configuração do netplan: $yaml_file"
-    
-    # Verifica se o arquivo existe
-    if [ ! -f "$yaml_file" ]; then
-        echo -e "${RED}Erro: Arquivo $yaml_file não encontrado.${NC}"
-        return 1
-    fi
-    
-    # Tenta gerar a configuração sem aplicar
-    if ! netplan generate --debug 2>/tmp/netplan_validate.log; then
-        echo -e "${RED}Erro na validação do netplan:${NC}"
-        cat /tmp/netplan_validate.log
-        
-        # Restaura o backup se existir
-        if [ -f "$backup_file" ]; then
-            echo -e "${YELLOW}Restaurando configuração anterior do netplan...${NC}"
-            cp "$backup_file" "$yaml_file"
-            chmod 600 "$yaml_file"
-            netplan apply
-        fi
-        
-        return 1
-    fi
-    
-    echo -e "${GREEN}Configuração do netplan validada com sucesso.${NC}"
-    log "Configuração do netplan validada com sucesso"
-    return 0
+    echo -e "${GREEN}Arquivo hosts atualizado.${NC}"
 }
 
-log "Configurando netplan"
-NETPLAN_CONTENT="network:
-    version: 2
-    renderer: networkd
-    ethernets:
-        $ADAPTER:
-            dhcp4: no
-            dhcp6: no
-    bridges:
-        br0:
-            interfaces: [$ADAPTER]
-            dhcp4: no
-            dhcp6: no
-            addresses: [$IP_SERVER/24]
-            routes:
-              - to: default
-                via: $IP_GATEWAY
-            nameservers:
-                addresses: [$IP_DNS1, $IP_DNS2]"
-
-# Verifica se existem outros arquivos de configuração do netplan
-NETPLAN_FILES=$(find /etc/netplan -name "*.yaml" | wc -l)
-if [ $NETPLAN_FILES -gt 0 ]; then
-    echo -e "${YELLOW}Atenção: Foram encontrados arquivos de configuração do netplan:${NC}"
-    find /etc/netplan -name "*.yaml" -exec ls -la {} \;
-    
-    # Verifica o conteúdo dos arquivos para identificar possíveis conflitos
-    CONFLICT_DETECTED=0
-    for file in $(find /etc/netplan -name "*.yaml"); do
-        if grep -q "$ADAPTER" "$file" || grep -q "br0" "$file"; then
-            echo -e "${RED}Possível conflito detectado em $file:${NC}"
-            grep -A 5 -B 5 "$ADAPTER\|br0" "$file" || true
-            CONFLICT_DETECTED=1
-        fi
-    done
-    
-    if [ $CONFLICT_DETECTED -eq 1 ]; then
-        echo -e "${RED}Foram detectados possíveis conflitos com a interface $ADAPTER ou bridge br0.${NC}"
-        echo -e "${YELLOW}É altamente recomendado fazer backup e desativar os arquivos existentes.${NC}"
-    fi
-    
-    echo -e "${YELLOW}Como deseja proceder?${NC}"
-    echo -e "1) Fazer backup e desativar permanentemente os arquivos existentes (recomendado)"
-    echo -e "2) Desativar temporariamente os arquivos existentes (apenas durante esta instalação)"
-    echo -e "3) Manter os arquivos existentes (pode causar conflitos)"
-    read -p "Escolha [1]: " NETPLAN_CHOICE
-    NETPLAN_CHOICE=${NETPLAN_CHOICE:-1}
-    
-    case $NETPLAN_CHOICE in
-        1)
-            echo -e "${BLUE}Fazendo backup e desativando permanentemente os arquivos existentes...${NC}"
-            log "Fazendo backup e desativando permanentemente os arquivos existentes do netplan"
-            for file in $(find /etc/netplan -name "*.yaml"); do
-                backup_file "$file"
-            done
-            ;;
-        2)
-            echo -e "${BLUE}Desativando temporariamente os arquivos existentes...${NC}"
-            log "Desativando temporariamente os arquivos existentes do netplan"
-            for file in $(find /etc/netplan -name "*.yaml"); do
-                mv "$file" "$file.temp.$(date +%Y%m%d%H%M%S)"
-                log "Arquivo $file temporariamente desativado"
-            done
-            # Registra os arquivos para restauração posterior
-            TEMP_FILES=$(find /etc/netplan -name "*.temp.*" | tr '\n' ' ')
-            ;;
-        3)
-            echo -e "${YELLOW}Mantendo os arquivos existentes. Isso pode causar conflitos.${NC}"
-            log "Mantendo os arquivos existentes do netplan"
-            ;;
-        *)
-            echo -e "${BLUE}Fazendo backup e desativando permanentemente os arquivos existentes...${NC}"
-            log "Fazendo backup e desativando permanentemente os arquivos existentes do netplan"
-            for file in $(find /etc/netplan -name "*.yaml"); do
-                backup_file "$file"
-            done
-            ;;
-    esac
-fi
-
-# Cria o novo arquivo de configuração
-NETPLAN_FILE="/etc/netplan/01-cloudstack-config.yaml"
-NETPLAN_BACKUP="${NETPLAN_FILE}.bak.$(date +%Y%m%d%H%M%S)"
-
-# Faz backup se o arquivo já existir
-if [ -f "$NETPLAN_FILE" ]; then
-    cp "$NETPLAN_FILE" "$NETPLAN_BACKUP"
-    log "Backup do arquivo $NETPLAN_FILE criado: $NETPLAN_BACKUP"
-fi
-
-# Escreve a nova configuração
-echo "$NETPLAN_CONTENT" > "$NETPLAN_FILE"
-chmod 600 "$NETPLAN_FILE"
-log "Arquivo de configuração do netplan criado: $NETPLAN_FILE"
-
-# Valida a configuração
-if ! validate_netplan "$NETPLAN_FILE" "$NETPLAN_BACKUP"; then
-    echo -e "${RED}Falha na validação do netplan. Verifique os logs e corrija a configuração.${NC}"
-    echo -e "${YELLOW}Deseja continuar mesmo assim? (s/n)${NC}"
-    read -p "Resposta: " CONTINUE_NETPLAN
-    if [[ ! "$CONTINUE_NETPLAN" =~ ^[Ss]$ ]]; then
-        echo -e "${RED}Instalação interrompida pelo usuário.${NC}"
-        log "Instalação interrompida devido a falha na validação do netplan"
-        exit 1
-    fi
-    log "Usuário optou por continuar apesar da falha na validação do netplan"
-fi
-
-log "Aplicando configuração de rede"
-echo -e "${YELLOW}Aplicando configuração de rede. O sistema pode ficar temporariamente inacessível.${NC}"
-echo -e "${YELLOW}Se perder a conexão, verifique se o IP do servidor mudou para: $IP_SERVER${NC}"
-
-# Barra de progresso
-width=$(tput cols)
-progress_width=$((width - 20))
-sleep_duration=$(echo "30 / $progress_width" | bc -l)
-echo -n "Progresso: ["
-for i in $(seq 1 $progress_width)
-do
-    sleep $sleep_duration
-    echo -n "#"
-done
-echo "]"
-
-echo -e "\n${BLUE}=== Informações de Acesso ===${NC}"
-echo -e "URL: ${GREEN}http://$IP_SERVER:8080/client${NC}"
-echo -e "Usuário: ${GREEN}admin${NC}"
-echo -e "Senha: ${GREEN}password${NC}"
-echo -e "\n${YELLOW}Nota: Por motivos de segurança, altere a senha padrão após o primeiro login.${NC}"
-echo -e "${YELLOW}Pode levar alguns minutos para que o CloudStack esteja totalmente operacional.${NC}"
-echo -e "${YELLOW}Log da instalação salvo em: ${GREEN}$LOG_FILE${NC}"
+configure_network
 
 # Verifica o status dos serviços
 echo -e "\n${BLUE}=== Status dos Serviços ===${NC}"
@@ -984,8 +742,8 @@ cat > $INFO_FILE << EOF
 ## Informações Gerais
 Nome do Host: $FULL_HOSTNAME
 Datacenter: $DC_NAME ($DC_CODE)
-Cluster: $CLUSTER_NUM
-Servidor: $SERVER_NUM
+Cluster: ${CLUSTER_NAME}${CLUSTER_NUM}
+Servidor: node${SERVER_NUM}
 
 ## Informações de Rede
 Rede: $IP_NETWORK
@@ -1007,8 +765,8 @@ Sistema Operacional: $OS_TYPE $OS_VERSION ($OS_CODENAME)
 CloudStack: 4.20.0.0 (LTS)
 
 ## Configuração MySQL
-Usuário CloudStack: $MYSQL_USER
-Senha CloudStack: $MYSQL_PASSWORD
+Usuário MySQL: $MYSQL_USER
+Senha MySQL: $MYSQL_PASSWORD
 Senha Root: $MYSQL_ROOT_PASSWORD
 
 ## Diretórios Importantes
@@ -1070,8 +828,8 @@ case "$OS_CODENAME" in
             log "Falha ao baixar a chave GPG usando wget. Tentando método alternativo."
             
             if ! curl -fsSL http://download.cloudstack.org/release.asc | apt-key add -; then
-                echo -e "${RED}Falha ao baixar a chave GPG. Não é possível continuar.${NC}"
-                log "Falha ao baixar a chave GPG. Não é possível continuar."
+                echo -e "${RED}Falha ao baixar a chave GPG.${NC}"
+                log "Falha ao baixar a chave GPG"
                 exit 1
             fi
         fi
@@ -1088,8 +846,8 @@ case "$OS_CODENAME" in
             log "Falha ao baixar a chave GPG usando wget. Tentando método alternativo."
             
             if ! curl -fsSL http://download.cloudstack.org/release.asc | apt-key add -; then
-                echo -e "${RED}Falha ao baixar a chave GPG. Não é possível continuar.${NC}"
-                log "Falha ao baixar a chave GPG. Não é possível continuar."
+                echo -e "${RED}Falha ao baixar a chave GPG.${NC}"
+                log "Falha ao baixar a chave GPG"
                 exit 1
             fi
         fi
@@ -1295,22 +1053,6 @@ if ! grep -q "/export/secondary" /etc/fstab; then
     echo "localhost:/export/secondary /mnt/secondary nfs rw,soft,intr 0 0" >> /etc/fstab
 fi
 log "Montagens NFS adicionadas ao fstab"
-
-# Restaura os arquivos temporariamente desativados se necessário
-if [ "$NETPLAN_CHOICE" = "2" ] && [ -n "$TEMP_FILES" ]; then
-    echo -e "${BLUE}Restaurando arquivos de configuração temporariamente desativados...${NC}"
-    log "Restaurando arquivos de configuração temporariamente desativados"
-    for file in $TEMP_FILES; do
-        original_file=$(echo "$file" | sed 's/\.temp\.[0-9]\+$//')
-        mv "$file" "$original_file"
-        log "Arquivo $file restaurado para $original_file"
-    done
-    echo -e "${YELLOW}Arquivos de configuração restaurados. Não execute netplan apply novamente.${NC}"
-    log "Arquivos de configuração restaurados"
-fi
-
-# Configura o DNS para usar o Google DNS
-configure_dns
 
 # Finaliza a instalação
 echo -e "\n${GREEN}=== Instalação concluída com sucesso! ===${NC}"
