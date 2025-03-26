@@ -161,74 +161,37 @@ check_internet_connection() {
 # Função para verificar resolução DNS
 check_dns_resolution() {
     local domain="$1"
-    echo -e "${BLUE}Verificando resolução DNS para $domain...${NC}"
-    log "Verificando resolução DNS para $domain"
     
-    if host "$domain" >/dev/null 2>&1; then
-        echo -e "${GREEN}Resolução DNS para $domain está funcionando.${NC}"
-        log "Resolução DNS para $domain está funcionando"
+    # Primeiro tenta resolver usando getent hosts (que verifica /etc/hosts)
+    if getent hosts "$domain" > /dev/null 2>&1; then
+        echo -e "${GREEN}Domínio $domain resolvido com sucesso (via /etc/hosts).${NC}"
+        log "Domínio $domain resolvido com sucesso (via /etc/hosts)"
         return 0
-    else
-        echo -e "${RED}Não foi possível resolver o domínio $domain.${NC}"
-        log "Não foi possível resolver o domínio $domain"
-        
-        echo -e "${YELLOW}Tentando métodos alternativos...${NC}"
-        # Tenta com nslookup
-        if nslookup "$domain" >/dev/null 2>&1; then
-            echo -e "${GREEN}Resolução DNS para $domain está funcionando (via nslookup).${NC}"
-            log "Resolução DNS para $domain está funcionando (via nslookup)"
-            return 0
-        fi
-        
-        # Tenta com dig
-        if command -v dig >/dev/null 2>&1 && dig "$domain" >/dev/null 2>&1; then
-            echo -e "${GREEN}Resolução DNS para $domain está funcionando (via dig).${NC}"
-            log "Resolução DNS para $domain está funcionando (via dig)"
-            return 0
-        fi
-        
-        echo -e "${YELLOW}Deseja adicionar uma entrada para $domain no arquivo /etc/hosts? (s/n)${NC}"
-        read -p "Adicionar ao /etc/hosts? [s]: " ADD_TO_HOSTS
-        ADD_TO_HOSTS=${ADD_TO_HOSTS:-s}
-        
-        if [[ "$ADD_TO_HOSTS" =~ ^[Ss]$ ]]; then
-            case "$domain" in
-                "download.cloudstack.org")
-                    echo -e "${BLUE}Adicionando entrada para download.cloudstack.org no arquivo /etc/hosts...${NC}"
-                    echo "185.199.109.153 download.cloudstack.org" >> /etc/hosts
-                    log "Adicionada entrada para download.cloudstack.org no arquivo /etc/hosts"
-                    ;;
-                *)
-                    echo -e "${RED}Não foi possível adicionar entrada para $domain no arquivo /etc/hosts.${NC}"
-                    log "Não foi possível adicionar entrada para $domain no arquivo /etc/hosts"
-                    ;;
-            esac
-            
-            # Verifica se a adição funcionou
-            if host "$domain" >/dev/null 2>&1; then
-                echo -e "${GREEN}Resolução DNS para $domain está funcionando agora.${NC}"
-                log "Resolução DNS para $domain está funcionando após adição ao /etc/hosts"
-                return 0
-            else
-                echo -e "${RED}Ainda não foi possível resolver o domínio $domain.${NC}"
-                log "Ainda não foi possível resolver o domínio $domain após adição ao /etc/hosts"
-            fi
-        fi
-        
-        echo -e "${YELLOW}Deseja continuar mesmo sem resolução DNS para $domain? (s/n)${NC}"
-        read -p "Continuar? [n]: " CONTINUE_WITHOUT_DNS
-        CONTINUE_WITHOUT_DNS=${CONTINUE_WITHOUT_DNS:-n}
-        
-        if [[ "$CONTINUE_WITHOUT_DNS" =~ ^[Ss]$ ]]; then
-            echo -e "${YELLOW}Continuando sem resolução DNS para $domain. Algumas funcionalidades podem não funcionar corretamente.${NC}"
-            log "Usuário optou por continuar sem resolução DNS para $domain"
-            return 0
-        else
-            echo -e "${RED}Instalação cancelada devido à falta de resolução DNS para $domain.${NC}"
-            log "Instalação cancelada devido à falta de resolução DNS para $domain"
-            exit 1
-        fi
     fi
+    
+    # Tenta resolver usando host
+    if host "$domain" > /dev/null 2>&1; then
+        echo -e "${GREEN}Domínio $domain resolvido com sucesso (via DNS).${NC}"
+        log "Domínio $domain resolvido com sucesso (via DNS)"
+        return 0
+    fi
+    
+    # Tenta resolver usando dig
+    if command -v dig > /dev/null && dig +short "$domain" > /dev/null 2>&1; then
+        echo -e "${GREEN}Domínio $domain resolvido com sucesso (via dig).${NC}"
+        log "Domínio $domain resolvido com sucesso (via dig)"
+        return 0
+    fi
+    
+    # Tenta resolver usando nslookup
+    if command -v nslookup > /dev/null && nslookup "$domain" > /dev/null 2>&1; then
+        echo -e "${GREEN}Domínio $domain resolvido com sucesso (via nslookup).${NC}"
+        log "Domínio $domain resolvido com sucesso (via nslookup)"
+        return 0
+    fi
+    
+    # Se chegou aqui, não foi possível resolver o domínio
+    return 1
 }
 
 # Função para adicionar entrada no arquivo hosts
@@ -321,6 +284,9 @@ allow_unauthenticated_repos() {
 configure_timezone() {
     log "Configurando fuso horário"
     
+    # Define o hostname
+    hostnamectl set-hostname $FULL_HOSTNAME
+    
     echo -e "\n${BLUE}=== Configuração de Fuso Horário ===${NC}"
     echo -e "${YELLOW}Selecione o fuso horário:${NC}"
     echo -e "1) America/Sao_Paulo (Recomendado)"
@@ -383,12 +349,89 @@ configure_timezone() {
 
 # Função para configurar o hostname
 configure_hostname() {
+    echo -e "\n${BLUE}=== Configurando hostname ===${NC}"
     log "Configurando hostname"
     
-    # Define o hostname
-    hostnamectl set-hostname $FULL_HOSTNAME
+    # Usa o hostname gerado pelo script
+    echo -e "${BLUE}Configurando hostname para: $FULL_HOSTNAME${NC}"
+    log "Configurando hostname para: $FULL_HOSTNAME"
     
-    echo -e "${GREEN}Hostname configurado: $FULL_HOSTNAME${NC}"
+    # Atualiza o hostname
+    hostnamectl set-hostname "$FULL_HOSTNAME"
+    
+    # Verifica se a configuração foi bem-sucedida
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Hostname configurado com sucesso para: $FULL_HOSTNAME${NC}"
+        log "Hostname configurado com sucesso para: $FULL_HOSTNAME"
+    else
+        echo -e "${RED}Falha ao configurar o hostname.${NC}"
+        log "Falha ao configurar o hostname"
+        return 1
+    fi
+    
+    # Atualiza o arquivo hosts após configurar o hostname
+    update_hosts
+    
+    return 0
+}
+
+# Função para atualizar o arquivo hosts
+update_hosts() {
+    echo -e "${BLUE}Atualizando arquivo hosts${NC}"
+    log "Atualizando arquivo hosts"
+    
+    # Backup do arquivo original
+    if [ -f /etc/hosts ]; then
+        cp /etc/hosts /etc/hosts.bak.$(date +%Y%m%d%H%M%S)
+    fi
+    
+    # Verifica se o hostname foi configurado corretamente
+    if [ -z "$FULL_HOSTNAME" ] || [ "$FULL_HOSTNAME" = "." ]; then
+        echo -e "${YELLOW}FULL_HOSTNAME não está definido corretamente. Usando hostname do sistema.${NC}"
+        log "FULL_HOSTNAME não está definido corretamente. Usando hostname do sistema"
+        HOSTNAME=$(hostname -s)
+        DOMAIN=$(hostname -d)
+        if [ -z "$DOMAIN" ]; then
+            DOMAIN="lideri.cloud"
+        fi
+        FULL_HOSTNAME="${HOSTNAME}.${DOMAIN}"
+    fi
+    
+    # Extrai o hostname curto
+    SHORT_HOSTNAME=$(echo "$FULL_HOSTNAME" | cut -d. -f1)
+    
+    # Obtém o endereço IP principal
+    local ip_server="$IP"
+    if [ -z "$ip_server" ]; then
+        ip_server=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0.1" | head -n 1)
+    fi
+    
+    # Verifica se existe entrada para download.cloudstack.org
+    local cloudstack_entry=""
+    if grep -q "download.cloudstack.org" /etc/hosts; then
+        cloudstack_entry=$(grep "download.cloudstack.org" /etc/hosts)
+    else
+        cloudstack_entry="79.127.208.169 download.cloudstack.org"
+    fi
+    
+    # Cria um novo arquivo hosts
+    cat > /etc/hosts << EOF
+127.0.0.1       localhost
+$ip_server      $FULL_HOSTNAME $SHORT_HOSTNAME
+
+# CloudStack Repository
+$cloudstack_entry
+
+# The following lines are desirable for IPv6 capable hosts
+::1             localhost ip6-localhost ip6-loopback
+ff02::1         ip6-allnodes
+ff02::2         ip6-allrouters
+EOF
+    
+    echo -e "${GREEN}Arquivo hosts atualizado com o hostname: $FULL_HOSTNAME ($SHORT_HOSTNAME)${NC}"
+    log "Arquivo hosts atualizado com o hostname: $FULL_HOSTNAME ($SHORT_HOSTNAME)"
+    
+    return 0
 }
 
 configure_hostname
@@ -406,7 +449,7 @@ ${BLUE} ╚═════╝╚══════╝ ╚═════╝  ╚
 ${GREEN}                                                                 v4.20.0.0 (LTS)${NC}
 "
 
-echo -e "${BLUE}=== Instalador CloudStack 4.20.0.0 ===${NC}"
+echo -e "\n${BLUE}=== Instalador CloudStack 4.20.0.0 ===${NC}"
 echo -e "${YELLOW}Suporta: Ubuntu 20.xx, 22.04, 24.04${NC}"
 echo -e "${YELLOW}Baseado no trabalho original de Dewans Nehra (https://dewansnehra.xyz)${NC}\n"
 
@@ -438,11 +481,46 @@ if ! command -v lsb_release &> /dev/null; then
     check_error "Falha ao instalar lsb-release"
 fi
 
+# Função para detectar a interface de rede principal
+detect_network_interface() {
+    # Tenta encontrar a interface principal que está ativa e tem um endereço IP
+    local main_interface=$(ip -o -4 route show to default | awk '{print $5}' | head -n1)
+    
+    # Se não encontrar uma interface com rota padrão, tenta listar todas as interfaces (exceto lo)
+    if [ -z "$main_interface" ]; then
+        main_interface=$(ip -o -4 addr | awk '{print $2}' | grep -v "lo" | head -n 1 | cut -d':' -f1)
+        
+        if [ -z "$main_interface" ]; then
+            echo -e "${YELLOW}Interface de rede não encontrada. Tentando detectar...${NC}"
+            log "Interface de rede não encontrada. Tentando detectar..."
+            IFACE=$(ip -o -4 addr | awk '{print $2}' | grep -v "lo" | head -n 1 | cut -d':' -f1)
+            
+            if [ -z "$IFACE" ]; then
+                echo -e "${RED}Não foi possível detectar a interface de rede. Por favor, especifique manualmente.${NC}"
+                log "Não foi possível detectar a interface de rede"
+                read -p "Nome da interface de rede (ex: eth0, ens3): " IFACE
+                
+                if [ -z "$IFACE" ]; then
+                    echo -e "${RED}Nenhuma interface especificada. Não é possível configurar a rede.${NC}"
+                    log "Nenhuma interface especificada. Não é possível configurar a rede"
+                    return 1
+                fi
+            fi
+        fi
+    fi
+    
+    echo "$main_interface"
+}
+
+# Detecta a interface de rede no início do script
+NETWORK_INTERFACE=$(detect_network_interface)
+log "Interface de rede detectada: $NETWORK_INTERFACE"
+
 # Configurações de rede
 echo -e "\n${BLUE}=== Detectando configurações de rede ===${NC}"
 GATEWAY=$(ip r | awk '/default/ {print $3}')
-IP=$(ip -o -4 addr show | awk '$2 != "lo" {print $4}' | cut -d/ -f1 | head -n1)
-ADAPTER=$(ip -o -4 addr show | awk '$2 != "lo" {print $2}' | head -n1)
+IP=$(ip -o -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0.1" | head -n1)
+ADAPTER=$NETWORK_INTERFACE
 
 echo -e "IP: ${GREEN}$IP${NC}"
 echo -e "Gateway: ${GREEN}$GATEWAY${NC}"
@@ -482,6 +560,12 @@ echo -e "5) echo"
 read -p "Escolha o cluster [1]: " CLUSTER_NAME_CHOICE
 CLUSTER_NAME_CHOICE=${CLUSTER_NAME_CHOICE:-1}
 
+# Garante que CLUSTER_NAME_CHOICE seja um número válido
+if ! [[ "$CLUSTER_NAME_CHOICE" =~ ^[1-5]$ ]]; then
+    echo -e "${YELLOW}Opção inválida. Usando o padrão (bravo).${NC}"
+    CLUSTER_NAME_CHOICE=1
+fi
+
 case $CLUSTER_NAME_CHOICE in
     1) CLUSTER_NAME="bravo" ;;
     2) CLUSTER_NAME="sierra" ;;
@@ -493,12 +577,19 @@ esac
 
 read -p "Número do Cluster (01-16) [01]: " CLUSTER_NUM
 CLUSTER_NUM=${CLUSTER_NUM:-01}
+
+# Garante que CLUSTER_NUM seja um número válido
+if ! [[ "$CLUSTER_NUM" =~ ^[0-9]+$ ]]; then
+    echo -e "${YELLOW}Número de cluster inválido. Usando o padrão (01).${NC}"
+    CLUSTER_NUM=01
+fi
+
 CLUSTER_NUM=$(printf "%02d" $((10#${CLUSTER_NUM})))
 
 # Calcula o terceiro octeto base para o cluster
 CLUSTER_ID=$((10#${CLUSTER_NUM}))
 if [ $CLUSTER_ID -lt 1 ] || [ $CLUSTER_ID -gt 16 ]; then
-    echo -e "${RED}Número de cluster inválido. Usando o padrão (01).${NC}"
+    echo -e "${YELLOW}Número de cluster inválido. Usando o padrão (01).${NC}"
     CLUSTER_ID=1
     CLUSTER_NUM="01"
 fi
@@ -508,12 +599,19 @@ THIRD_OCTET=$(((($CLUSTER_ID-1)*16) + 16))
 # Seleciona o Servidor
 read -p "Número do Servidor (01-16) [01]: " SERVER_NUM
 SERVER_NUM=${SERVER_NUM:-01}
+
+# Garante que SERVER_NUM seja um número válido
+if ! [[ "$SERVER_NUM" =~ ^[0-9]+$ ]]; then
+    echo -e "${YELLOW}Número de servidor inválido. Usando o padrão (01).${NC}"
+    SERVER_NUM=01
+fi
+
 SERVER_NUM=$(printf "%02d" $((10#$SERVER_NUM)))
 
 # Calcula o IP com base nas regras da Lideri.cloud
 SERVER_ID=$((10#$SERVER_NUM))
 if [ $SERVER_ID -lt 1 ] || [ $SERVER_ID -gt 16 ]; then
-    echo -e "${RED}Número de servidor inválido. Usando o padrão (01).${NC}"
+    echo -e "${YELLOW}Número de servidor inválido. Usando o padrão (01).${NC}"
     SERVER_ID=1
     SERVER_NUM="01"
 fi
@@ -540,8 +638,8 @@ MGMT_IP="10.$DC_OCTET.0.$SERVER_ID"
 echo -e "\n${BLUE}=== Configurações do Host ===${NC}"
 echo -e "${YELLOW}Seguindo padrão de nomenclatura Lideri.cloud${NC}"
 
-# Gera o nome do host conforme padrão <cluster>.<node>.<zone>.lideri.cloud
-HOSTNAME="${CLUSTER_NAME}${CLUSTER_NUM}.node${SERVER_NUM}.${DC_CODE}"
+# Gera o nome do host conforme padrão <cluster><num>-node<num>-<subdomínio>.<domínio>
+HOSTNAME="${CLUSTER_NAME}${CLUSTER_NUM}-node${SERVER_NUM}-${DC_CODE}"
 echo -e "Nome do Host: ${GREEN}$HOSTNAME${NC}"
 
 read -p "Domínio [lideri.cloud]: " DOMAIN
@@ -603,19 +701,6 @@ safe_apt_get -y upgrade
 check_error "Falha ao atualizar pacotes"
 log "Sistema atualizado com sucesso"
 
-# Configura o hostname
-echo -e "\n${BLUE}=== Configurando hostname ===${NC}"
-log "Configurando hostname: $FULL_HOSTNAME"
-hostnamectl set-hostname $FULL_HOSTNAME
-check_error "Falha ao configurar hostname"
-
-# Configura o arquivo hosts
-echo -e "\n${BLUE}=== Configurando arquivo /etc/hosts ===${NC}"
-log "Configurando arquivo /etc/hosts"
-HOSTS_CONTENT="127.0.0.1\tlocalhost\n$IP_SERVER\t$FULL_HOSTNAME\t$HOSTNAME"
-echo -e "$HOSTS_CONTENT" | tee /etc/hosts
-check_error "Falha ao configurar arquivo hosts"
-
 # Instala pacotes básicos
 echo -e "\n${BLUE}=== Instalando pacotes básicos ===${NC}"
 log "Instalando pacotes básicos"
@@ -630,93 +715,107 @@ log "Configurando rede"
 configure_network() {
     log "Configurando rede"
     
-    # Verifica se o arquivo de interfaces existe
-    if [ ! -f /etc/netplan/00-installer-config.yaml ]; then
-        echo -e "${YELLOW}Arquivo de configuração de rede não encontrado. Criando um novo.${NC}"
-        cat > /etc/netplan/00-installer-config.yaml << EOF
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    eth0:
-      dhcp4: no
-      addresses: [$IP_SERVER/24]
-      gateway4: $IP_GATEWAY
-      nameservers:
-        addresses: [$IP_DNS1, $IP_DNS2]
-EOF
-    else
-        # Backup do arquivo original
-        cp /etc/netplan/00-installer-config.yaml /etc/netplan/00-installer-config.yaml.bak
-        
-        # Atualiza a configuração de rede
-        cat > /etc/netplan/00-installer-config.yaml << EOF
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    eth0:
-      dhcp4: no
-      addresses: [$IP_SERVER/24]
-      gateway4: $IP_GATEWAY
-      nameservers:
-        addresses: [$IP_DNS1, $IP_DNS2]
-EOF
+    # Verifica se o Netplan está instalado
+    if ! command -v netplan &> /dev/null; then
+        echo -e "${YELLOW}Netplan não encontrado. Instalando...${NC}"
+        log "Netplan não encontrado. Instalando..."
+        safe_apt_get install -y netplan.io
     fi
     
-    # Aplica a configuração
-    netplan apply
-    
-    # Verifica se a configuração foi aplicada corretamente
-    sleep 5
-    CURRENT_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-    if [ "$CURRENT_IP" != "$IP_SERVER" ]; then
-        echo -e "${RED}Falha ao aplicar configuração de rede. IP atual: $CURRENT_IP, IP esperado: $IP_SERVER${NC}"
-        echo -e "${YELLOW}Tentando configuração alternativa...${NC}"
+    # Determina o nome da interface de rede principal
+    IFACE=$(ip -o -4 route show to default | awk '{print $5}' | head -n 1)
+    if [ -z "$IFACE" ]; then
+        echo -e "${YELLOW}Interface de rede não encontrada. Tentando detectar...${NC}"
+        log "Interface de rede não encontrada. Tentando detectar..."
+        IFACE=$(ip -o -4 addr | awk '{print $2}' | grep -v "lo" | head -n 1 | cut -d':' -f1)
         
-        # Tenta configuração alternativa
-        ip addr add $IP_SERVER/24 dev eth0
-        ip route add default via $IP_GATEWAY
-        
-        # Verifica novamente
-        sleep 2
-        CURRENT_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-        if [ "$CURRENT_IP" != "$IP_SERVER" ]; then
-            echo -e "${RED}Falha ao aplicar configuração de rede alternativa.${NC}"
-            echo -e "${YELLOW}Por favor, configure manualmente a rede após a instalação.${NC}"
-        else
-            echo -e "${GREEN}Configuração de rede alternativa aplicada com sucesso.${NC}"
+        if [ -z "$IFACE" ]; then
+            echo -e "${RED}Não foi possível detectar a interface de rede. Por favor, especifique manualmente.${NC}"
+            log "Não foi possível detectar a interface de rede"
+            read -p "Nome da interface de rede (ex: eth0, ens3): " IFACE
+            
+            if [ -z "$IFACE" ]; then
+                echo -e "${RED}Nenhuma interface especificada. Não é possível configurar a rede.${NC}"
+                log "Nenhuma interface especificada. Não é possível configurar a rede"
+                return 1
+            fi
         fi
-    else
-        echo -e "${GREEN}Configuração de rede aplicada com sucesso.${NC}"
     fi
+    
+    echo -e "${BLUE}Interface de rede detectada: $IFACE${NC}"
+    log "Interface de rede detectada: $IFACE"
+    
+    # Cria o arquivo de configuração do Netplan
+    local netplan_file="/etc/netplan/01-cloudstack-config.yaml"
+    
+    # Faz backup do arquivo existente, se houver
+    if [ -f "$netplan_file" ]; then
+        cp "$netplan_file" "${netplan_file}.bak.$(date +%Y%m%d%H%M%S)"
+        log "Backup do arquivo de configuração do Netplan criado"
+    fi
+    
+    # Cria o arquivo de configuração do Netplan com bridge cloudbr0
+    cat > "$netplan_file" << EOF
+# Configuração de rede para CloudStack
+# Gerado automaticamente por cloudstack-installer.sh
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    # Substitua pela sua interface física real
+    $IFACE:
+      dhcp4: no
+      dhcp6: no
+  bridges:
+    cloudbr0:
+      interfaces: [$IFACE]  # A interface física deve estar aqui
+      addresses: [$IP_SERVER/24]
+      routes:
+        - to: default
+          via: $IP_GATEWAY
+      nameservers:
+        addresses: [$IP_DNS1, $IP_DNS2]
+      parameters:
+        stp: false
+        forward-delay: 0
+      dhcp4: no
+      dhcp6: no
+EOF
+    
+    # Define as permissões corretas para o arquivo de configuração
+    chmod 600 "$netplan_file"
+    
+    echo -e "${BLUE}Aplicando configuração de rede...${NC}"
+    log "Aplicando configuração de rede"
+    
+    # Aviso sobre possível perda de conectividade
+    echo -e "${YELLOW}AVISO: A aplicação desta configuração pode causar perda temporária de conectividade.${NC}"
+    echo -e "${YELLOW}Se você estiver conectado remotamente, certifique-se de ter acesso alternativo ao servidor.${NC}"
+    read -p "Deseja aplicar a configuração agora? (s/n): " APPLY_NOW
+    
+    if [[ "$APPLY_NOW" =~ ^[Ss]$ ]]; then
+        # Aplica a configuração
+        if ! netplan apply; then
+            echo -e "${RED}Falha ao aplicar configuração de rede. Verifique o arquivo $netplan_file${NC}"
+            log "Falha ao aplicar configuração de rede"
+            return 1
+        fi
+        
+        echo -e "${GREEN}Configuração de rede aplicada com sucesso.${NC}"
+        log "Configuração de rede aplicada com sucesso"
+    else
+        echo -e "${YELLOW}A configuração de rede foi salva, mas não foi aplicada.${NC}"
+        echo -e "${YELLOW}Para aplicá-la manualmente, execute: sudo netplan apply${NC}"
+        log "Configuração de rede salva, mas não aplicada"
+    fi
+    
+    # Corrige as permissões de todos os arquivos do Netplan
+    fix_netplan_permissions
     
     # Atualiza o arquivo hosts
-    update_hosts_file
-}
-
-update_hosts_file() {
-    log "Atualizando arquivo hosts"
+    update_hosts
     
-    # Backup do arquivo original
-    cp /etc/hosts /etc/hosts.bak
-    
-    # Cria um novo arquivo hosts
-    cat > /etc/hosts << EOF
-127.0.0.1       localhost
-$IP_SERVER      $FULL_HOSTNAME $HOSTNAME
-
-# Servidores DNS Anycast da Lideri.cloud
-$IP_DNS1        dns1.lideri.cloud
-$IP_DNS2        dns2.lideri.cloud
-
-# The following lines are desirable for IPv6 capable hosts
-::1             localhost ip6-localhost ip6-loopback
-ff02::1         ip6-allnodes
-ff02::2         ip6-allrouters
-EOF
-    
-    echo -e "${GREEN}Arquivo hosts atualizado.${NC}"
+    return 0
 }
 
 configure_network
@@ -732,58 +831,105 @@ systemctl status nfs-kernel-server --no-pager
 echo -e "\n${GREEN}=== Instalação do CloudStack 4.20.0.0 concluída! ===${NC}"
 log "Processo de instalação finalizado"
 
-# Gera um arquivo de informações do servidor
-echo -e "\n${BLUE}=== Gerando arquivo de informações do servidor ===${NC}"
-INFO_FILE="/root/server-info-$HOSTNAME.txt"
-cat > $INFO_FILE << EOF
-# Informações do Servidor CloudStack
-# Gerado em: $(date)
+# Função para verificar e corrigir permissões do arquivo de configuração do Netplan
+fix_netplan_permissions() {
+    echo -e "${BLUE}Verificando permissões dos arquivos de configuração do Netplan...${NC}"
+    log "Verificando permissões dos arquivos de configuração do Netplan"
+    
+    # Procura por arquivos de configuração do Netplan
+    local netplan_files=$(find /etc/netplan -name "*.yaml" -type f 2>/dev/null)
+    
+    if [ -z "$netplan_files" ]; then
+        echo -e "${YELLOW}Nenhum arquivo de configuração do Netplan encontrado.${NC}"
+        log "Nenhum arquivo de configuração do Netplan encontrado"
+        return 0
+    fi
+    
+    # Corrige as permissões de cada arquivo
+    for file in $netplan_files; do
+        local current_perms=$(stat -c "%a" "$file")
+        
+        if [ "$current_perms" != "600" ]; then
+            echo -e "${YELLOW}Corrigindo permissões do arquivo $file (de $current_perms para 600)...${NC}"
+            log "Corrigindo permissões do arquivo $file (de $current_perms para 600)"
+            chmod 600 "$file"
+            
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}Permissões do arquivo $file corrigidas com sucesso.${NC}"
+                log "Permissões do arquivo $file corrigidas com sucesso"
+            else
+                echo -e "${RED}Falha ao corrigir permissões do arquivo $file.${NC}"
+                log "Falha ao corrigir permissões do arquivo $file"
+            fi
+        else
+            echo -e "${GREEN}Permissões do arquivo $file já estão corretas (600).${NC}"
+            log "Permissões do arquivo $file já estão corretas (600)"
+        fi
+    done
+    
+    return 0
+}
 
-## Informações Gerais
-Nome do Host: $FULL_HOSTNAME
-Datacenter: $DC_NAME ($DC_CODE)
-Cluster: ${CLUSTER_NAME}${CLUSTER_NUM}
-Servidor: node${SERVER_NUM}
+fix_netplan_permissions
 
-## Informações de Rede
-Rede: $IP_NETWORK
-IP do Servidor: $IP_SERVER
-Gateway: $IP_GATEWAY
-DNS Primário: $IP_DNS1
-DNS Secundário: $IP_DNS2
-DHCP: $IP_DHCP
-IP de Gerenciamento (Sistema): $IP_MGMT
-IP de Gerenciamento (iDRAC/iLO): $MGMT_IP
+# Função para atualizar o arquivo hosts
+update_hosts() {
+    echo -e "${BLUE}Atualizando arquivo hosts${NC}"
+    log "Atualizando arquivo hosts"
+    
+    # Backup do arquivo original
+    if [ -f /etc/hosts ]; then
+        cp /etc/hosts /etc/hosts.bak.$(date +%Y%m%d%H%M%S)
+    fi
+    
+    # Verifica se o hostname foi configurado corretamente
+    if [ -z "$FULL_HOSTNAME" ] || [ "$FULL_HOSTNAME" = "." ]; then
+        echo -e "${YELLOW}FULL_HOSTNAME não está definido corretamente. Usando hostname do sistema.${NC}"
+        log "FULL_HOSTNAME não está definido corretamente. Usando hostname do sistema"
+        HOSTNAME=$(hostname -s)
+        DOMAIN=$(hostname -d)
+        if [ -z "$DOMAIN" ]; then
+            DOMAIN="lideri.cloud"
+        fi
+        FULL_HOSTNAME="${HOSTNAME}.${DOMAIN}"
+    fi
+    
+    # Extrai o hostname curto
+    SHORT_HOSTNAME=$(echo "$FULL_HOSTNAME" | cut -d. -f1)
+    
+    # Obtém o endereço IP principal
+    local ip_server="$IP"
+    if [ -z "$ip_server" ]; then
+        ip_server=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0.1" | head -n 1)
+    fi
+    
+    # Verifica se existe entrada para download.cloudstack.org
+    local cloudstack_entry=""
+    if grep -q "download.cloudstack.org" /etc/hosts; then
+        cloudstack_entry=$(grep "download.cloudstack.org" /etc/hosts)
+    else
+        cloudstack_entry="79.127.208.169 download.cloudstack.org"
+    fi
+    
+    # Cria um novo arquivo hosts
+    cat > /etc/hosts << EOF
+127.0.0.1       localhost
+$ip_server      $FULL_HOSTNAME $SHORT_HOSTNAME
 
-## Acesso CloudStack
-URL: http://$IP_SERVER:8080/client
-Usuário: admin
-Senha: password (altere após o primeiro login)
+# CloudStack Repository
+$cloudstack_entry
 
-## Informações do Sistema
-Sistema Operacional: $OS_TYPE $OS_VERSION ($OS_CODENAME)
-CloudStack: 4.20.0.0 (LTS)
-
-## Configuração MySQL
-Usuário MySQL: $MYSQL_USER
-Senha MySQL: $MYSQL_PASSWORD
-Senha Root: $MYSQL_ROOT_PASSWORD
-
-## Diretórios Importantes
-NFS Primário: /export/primary
-NFS Secundário: /export/secondary
-Montagens: /mnt/primary, /mnt/secondary
+# The following lines are desirable for IPv6 capable hosts
+::1             localhost ip6-localhost ip6-loopback
+ff02::1         ip6-allnodes
+ff02::2         ip6-allrouters
 EOF
-
-echo -e "Arquivo de informações gerado em: ${GREEN}$INFO_FILE${NC}"
-log "Arquivo de informações do servidor gerado em: $INFO_FILE"
-
-# Configura o repositório CloudStack
-echo -e "\n${BLUE}=== Configurando repositório CloudStack ===${NC}"
-log "Configurando repositório CloudStack para $OS_CODENAME"
-
-# Configura DNS para usar Google DNS
-configure_dns
+    
+    echo -e "${GREEN}Arquivo hosts atualizado com o hostname: $FULL_HOSTNAME ($SHORT_HOSTNAME)${NC}"
+    log "Arquivo hosts atualizado com o hostname: $FULL_HOSTNAME ($SHORT_HOSTNAME)"
+    
+    return 0
+}
 
 # Verifica conectividade com a internet antes de prosseguir
 echo -e "${BLUE}Verificando conectividade com a internet...${NC}"
@@ -800,137 +946,410 @@ echo -e "${BLUE}Verificando resolução DNS para download.cloudstack.org...${NC}
 log "Verificando resolução DNS para download.cloudstack.org"
 check_dns_resolution "download.cloudstack.org"
 if [ $? -ne 0 ]; then
-    echo -e "${YELLOW}Falha na resolução DNS para download.cloudstack.org.${NC}"
-    log "Falha na resolução DNS para download.cloudstack.org"
+    echo -e "${YELLOW}Não foi possível resolver o domínio download.cloudstack.org.${NC}"
+    log "Não foi possível resolver o domínio download.cloudstack.org"
     
-    echo -e "${BLUE}Adicionando entrada para download.cloudstack.org no arquivo /etc/hosts...${NC}"
-    log "Adicionando entrada para download.cloudstack.org no arquivo /etc/hosts"
-    add_to_hosts "download.cloudstack.org" "104.18.20.196"
+    read -p "Deseja continuar mesmo sem resolução DNS para download.cloudstack.org? (s/n) " -n 1 -r
+    echo
     
-    # Verifica novamente
-    check_dns_resolution "download.cloudstack.org"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Ainda não é possível resolver download.cloudstack.org. Não é possível continuar.${NC}"
-        log "Ainda não é possível resolver download.cloudstack.org. Não é possível continuar."
+    if [[ ! $REPLY =~ ^[Ss]$ ]]; then
+        echo -e "${RED}Instalação cancelada devido à falta de resolução DNS para download.cloudstack.org.${NC}"
+        log "Instalação cancelada devido à falta de resolução DNS para download.cloudstack.org"
         exit 1
+    else
+        echo -e "${YELLOW}Continuando sem resolução DNS para download.cloudstack.org. Algumas funcionalidades podem não funcionar corretamente.${NC}"
+        log "Usuário optou por continuar sem resolução DNS para download.cloudstack.org"
     fi
 fi
 
-# Ubuntu
-case "$OS_CODENAME" in
-    focal)
-        echo -e "${BLUE}Adicionando chave GPG do repositório CloudStack...${NC}"
-        log "Adicionando chave GPG do repositório CloudStack"
+# Função para limpar repositórios CloudStack antigos
+clean_old_cloudstack_repos() {
+    echo -e "${BLUE}Limpando repositórios CloudStack antigos...${NC}"
+    log "Limpando repositórios CloudStack antigos"
+    
+    # Remove entradas antigas do CloudStack do sources.list
+    if [ -f /etc/apt/sources.list ]; then
+        echo -e "${BLUE}Verificando e removendo entradas do CloudStack em /etc/apt/sources.list...${NC}"
+        log "Verificando e removendo entradas do CloudStack em /etc/apt/sources.list"
         
-        # Tenta baixar e adicionar a chave GPG com tratamento de erros
-        if ! wget -q -O - http://download.cloudstack.org/release.asc | apt-key add -; then
-            echo -e "${YELLOW}Falha ao baixar a chave GPG usando wget. Tentando método alternativo...${NC}"
-            log "Falha ao baixar a chave GPG usando wget. Tentando método alternativo."
-            
-            if ! curl -fsSL http://download.cloudstack.org/release.asc | apt-key add -; then
-                echo -e "${RED}Falha ao baixar a chave GPG.${NC}"
-                log "Falha ao baixar a chave GPG"
-                exit 1
-            fi
-        fi
+        # Faz backup do arquivo original
+        cp /etc/apt/sources.list /etc/apt/sources.list.bak
+        log "Backup do sources.list criado em /etc/apt/sources.list.bak"
         
-        echo "deb [arch=amd64] http://download.cloudstack.org/ubuntu focal 4.20" > /etc/apt/sources.list.d/cloudstack.list
-        ;;
-    jammy)
-        echo -e "${BLUE}Adicionando chave GPG do repositório CloudStack...${NC}"
-        log "Adicionando chave GPG do repositório CloudStack"
-        
-        # Tenta baixar e adicionar a chave GPG com tratamento de erros
-        if ! wget -q -O - http://download.cloudstack.org/release.asc | apt-key add -; then
-            echo -e "${YELLOW}Falha ao baixar a chave GPG usando wget. Tentando método alternativo...${NC}"
-            log "Falha ao baixar a chave GPG usando wget. Tentando método alternativo."
-            
-            if ! curl -fsSL http://download.cloudstack.org/release.asc | apt-key add -; then
-                echo -e "${RED}Falha ao baixar a chave GPG.${NC}"
-                log "Falha ao baixar a chave GPG"
-                exit 1
-            fi
-        fi
-        
-        echo "deb [arch=amd64] http://download.cloudstack.org/ubuntu jammy 4.20" > /etc/apt/sources.list.d/cloudstack.list
-        ;;
-    noble)
-        # Para Ubuntu 24.04 (noble), usamos o método moderno de adicionar a chave GPG
-        echo -e "${BLUE}Adicionando chave GPG do repositório CloudStack para Ubuntu 24.04 (noble)...${NC}"
-        log "Adicionando chave GPG do repositório CloudStack para Ubuntu 24.04 (noble)"
-        
-        # Remove configurações anteriores
-        rm -f /etc/apt/sources.list.d/cloudstack.list
-        rm -f /etc/apt/trusted.gpg.d/cloudstack.asc
-        
-        # Adiciona a chave GPG usando o método moderno com tratamento de erros aprimorado
-        echo -e "${BLUE}Baixando e adicionando chave GPG...${NC}"
-        log "Baixando e adicionando chave GPG"
-        
-        # Tenta vários métodos para baixar a chave GPG
-        if wget -q -O - https://download.cloudstack.org/release.asc | tee /etc/apt/trusted.gpg.d/cloudstack.asc > /dev/null; then
-            echo -e "${GREEN}Chave GPG adicionada com sucesso.${NC}"
-            log "Chave GPG adicionada com sucesso"
-        elif curl -fsSL https://download.cloudstack.org/release.asc | tee /etc/apt/trusted.gpg.d/cloudstack.asc > /dev/null; then
-            echo -e "${GREEN}Chave GPG adicionada com sucesso usando curl.${NC}"
-            log "Chave GPG adicionada com sucesso usando curl"
-        else
-            echo -e "${RED}Falha ao adicionar chave GPG.${NC}"
-            log "Falha ao adicionar chave GPG"
-            exit 1
-        fi
-        
-        # Adiciona o repositório CloudStack usando HTTPS
-        echo -e "${BLUE}Configurando repositório CloudStack...${NC}"
-        log "Configurando repositório CloudStack"
-        echo "deb https://download.cloudstack.org/ubuntu noble 4.20" > /etc/apt/sources.list.d/cloudstack.list
-        
-        echo -e "${GREEN}Repositório configurado para Ubuntu 24.04 (noble)${NC}"
-        log "Repositório configurado para Ubuntu 24.04 (noble)"
-        ;;
-    *)
-        echo -e "${RED}Versão do Ubuntu não suportada: $OS_CODENAME${NC}"
-        log "Versão do Ubuntu não suportada: $OS_CODENAME"
-        exit 1
-        ;;
-esac
-
-# Atualiza e instala CloudStack
-echo -e "\n${BLUE}=== Instalando CloudStack 4.20.0.0 ===${NC}"
-log "Atualizando repositórios"
-
-# Atualiza o sistema
-echo -e "${BLUE}Atualizando o sistema...${NC}"
-log "Iniciando atualização do sistema"
-
-# Executa apt-get update
-echo -e "${BLUE}Executando: apt-get update${NC}"
-log "Executando: apt-get update"
-
-# Verifica bloqueio do apt
-wait_for_apt_lock
-
-# Executa apt-get update com retry
-for i in {1..3}; do
-    if apt-get update; then
-        echo -e "${GREEN}Sistema atualizado com sucesso.${NC}"
-        log "Sistema atualizado com sucesso"
-        break
-    else
-        echo -e "${YELLOW}Falha ao executar apt-get. Tentativa $i de 3.${NC}"
-        log "Falha ao executar apt-get. Tentativa $i de 3."
-        
-        if [ $i -eq 3 ]; then
-            echo -e "${RED}Falha ao executar apt-get após 3 tentativas.${NC}"
-            log "Falha ao executar apt-get após 3 tentativas."
-            echo -e "${RED}Erro: Falha ao atualizar o sistema${NC}"
-            echo -e "${YELLOW}Verifique os logs para mais detalhes.${NC}"
-            exit 1
-        fi
-        
-        sleep 5
+        # Remove linhas contendo "cloudstack" ou "download.cloudstack.org"
+        sed -i '/cloudstack\|download\.cloudstack\.org/d' /etc/apt/sources.list
     fi
-done
+    
+    # Remove arquivos de repositório CloudStack antigos
+    echo -e "${BLUE}Removendo arquivos de repositório CloudStack antigos...${NC}"
+    log "Removendo arquivos de repositório CloudStack antigos"
+    
+    # Lista de possíveis arquivos de repositório CloudStack
+    local repo_files=(
+        "/etc/apt/sources.list.d/cloudstack.list"
+        "/etc/apt/sources.list.d/cloudstack-repo.list"
+        "/etc/apt/sources.list.d/cloudstack-stable.list"
+        "/etc/apt/sources.list.d/cloudstack-testing.list"
+    )
+    
+    # Remove cada arquivo se existir
+    for file in "${repo_files[@]}"; do
+        if [ -f "$file" ]; then
+            echo -e "${BLUE}Removendo $file...${NC}"
+            log "Removendo $file"
+            rm -f "$file"
+        fi
+    done
+    
+    # Remove chaves GPG antigas
+    echo -e "${BLUE}Removendo chaves GPG antigas do CloudStack...${NC}"
+    log "Removendo chaves GPG antigas do CloudStack"
+    
+    # Remove usando apt-key (método antigo)
+    apt-key del "3D62B837F100E758" 2>/dev/null || true
+    
+    # Lista de possíveis arquivos de chave GPG
+    local gpg_files=(
+        "/etc/apt/trusted.gpg.d/cloudstack.gpg"
+        "/etc/apt/trusted.gpg.d/cloudstack-archive-keyring.gpg"
+        "/etc/apt/keyrings/cloudstack.gpg"
+        "/etc/apt/keyrings/cloudstack-archive-keyring.gpg"
+    )
+    
+    # Remove cada arquivo se existir
+    for file in "${gpg_files[@]}"; do
+        if [ -f "$file" ]; then
+            echo -e "${BLUE}Removendo $file...${NC}"
+            log "Removendo $file"
+            rm -f "$file"
+        fi
+    done
+    
+    echo -e "${GREEN}Limpeza de repositórios CloudStack antigos concluída.${NC}"
+    log "Limpeza de repositórios CloudStack antigos concluída"
+    
+    return 0
+}
+
+# Função para adicionar o repositório CloudStack
+add_cloudstack_repo() {
+    local ubuntu_version=$1
+    
+    echo -e "${BLUE}Configurando repositório CloudStack para $ubuntu_version${NC}"
+    log "Configurando repositório CloudStack para $ubuntu_version"
+    
+    # Limpa repositórios antigos do CloudStack
+    clean_old_cloudstack_repos
+    
+    # Configura DNS para usar Google DNS
+    echo -e "${BLUE}Configurando DNS para usar Google DNS (8.8.8.8)${NC}"
+    log "Configurando DNS para usar Google DNS (8.8.8.8)"
+    
+    # Faz backup do resolv.conf
+    cp /etc/resolv.conf /etc/resolv.conf.bak
+    log "Backup do resolv.conf criado em /etc/resolv.conf.bak"
+    
+    # Configura DNS
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+    
+    echo -e "${GREEN}DNS configurado com sucesso.${NC}"
+    log "DNS configurado com sucesso"
+    
+    # Verifica conectividade com a internet
+    echo -e "${BLUE}Verificando conectividade com a internet...${NC}"
+    log "Verificando conectividade com a internet"
+    check_internet_connection
+    
+    # Verifica resolução DNS para download.cloudstack.org
+    echo -e "${BLUE}Verificando resolução DNS para download.cloudstack.org...${NC}"
+    log "Verificando resolução DNS para download.cloudstack.org"
+    
+    # Tenta resolver o domínio download.cloudstack.org
+    if ! check_dns_resolution "download.cloudstack.org"; then
+        echo -e "${YELLOW}Não foi possível resolver o domínio download.cloudstack.org.${NC}"
+        log "Não foi possível resolver o domínio download.cloudstack.org"
+        
+        read -p "Deseja continuar mesmo sem resolução DNS para download.cloudstack.org? (s/n) " -n 1 -r
+        echo
+        
+        if [[ ! $REPLY =~ ^[Ss]$ ]]; then
+            echo -e "${RED}Instalação cancelada devido à falta de resolução DNS para download.cloudstack.org.${NC}"
+            log "Instalação cancelada devido à falta de resolução DNS para download.cloudstack.org"
+            exit 1
+        else
+            echo -e "${YELLOW}Continuando sem resolução DNS para download.cloudstack.org. Algumas funcionalidades podem não funcionar corretamente.${NC}"
+            log "Usuário optou por continuar sem resolução DNS para download.cloudstack.org"
+        fi
+    fi
+    
+    # Instala dependências necessárias
+    echo -e "${BLUE}Instalando dependências necessárias...${NC}"
+    log "Instalando dependências necessárias"
+    
+    if ! safe_apt_get install -y apt-transport-https ca-certificates gnupg2; then
+        echo -e "${YELLOW}Falha ao instalar dependências. Tentando continuar mesmo assim...${NC}"
+        log "Falha ao instalar dependências. Tentando continuar mesmo assim"
+    fi
+    
+    # Cria diretório para chaves GPG se não existir
+    if [ ! -d /etc/apt/keyrings ]; then
+        echo -e "${BLUE}Criando diretório /etc/apt/keyrings...${NC}"
+        log "Criando diretório /etc/apt/keyrings"
+        mkdir -p /etc/apt/keyrings
+        chmod 755 /etc/apt/keyrings
+    fi
+    
+    # Baixa e adiciona a chave GPG
+    echo -e "${BLUE}Baixando e adicionando chave GPG do CloudStack...${NC}"
+    log "Baixando e adicionando chave GPG do CloudStack"
+    
+    # Define a URL da chave GPG
+    local gpg_key_url="https://download.cloudstack.org/release.asc"
+    local gpg_key_file="/etc/apt/trusted.gpg.d/cloudstack.asc"
+    
+    # Tenta baixar a chave GPG
+    echo -e "${BLUE}Tentando baixar a chave GPG oficial do Apache CloudStack...${NC}"
+    log "Tentando baixar a chave GPG oficial do Apache CloudStack"
+    if wget -O- "$gpg_key_url" > "$gpg_key_file" 2>/dev/null; then
+        echo -e "${GREEN}Chave GPG baixada e instalada com sucesso.${NC}"
+        log "Chave GPG baixada e instalada com sucesso"
+        chmod 644 "$gpg_key_file"
+    else
+        echo -e "${YELLOW}Falha ao baixar a chave GPG usando wget. Tentando com curl...${NC}"
+        log "Falha ao baixar a chave GPG usando wget. Tentando com curl"
+        
+        if curl -fsSL "$gpg_key_url" > "$gpg_key_file" 2>/dev/null; then
+            echo -e "${GREEN}Chave GPG baixada e instalada com sucesso usando curl.${NC}"
+            log "Chave GPG baixada e instalada com sucesso usando curl"
+            chmod 644 "$gpg_key_file"
+        else
+            echo -e "${YELLOW}Falha ao baixar a chave GPG com curl. Tentando método alternativo...${NC}"
+            log "Falha ao baixar a chave GPG com curl. Tentando método alternativo"
+            
+            # Método alternativo: usar apt-key (obsoleto, mas pode funcionar como fallback)
+            if wget -O- "$gpg_key_url" | apt-key add - 2>/dev/null; then
+                echo -e "${GREEN}Chave GPG adicionada com sucesso usando apt-key.${NC}"
+                log "Chave GPG adicionada com sucesso usando apt-key"
+            else
+                echo -e "${RED}Falha ao adicionar a chave GPG. Continuando sem a chave...${NC}"
+                log "Falha ao adicionar a chave GPG. Continuando sem a chave"
+                USE_TRUSTED_YES=true
+            fi
+        fi
+    fi
+    
+    # Adiciona o repositório CloudStack
+    echo -e "${BLUE}Adicionando repositório CloudStack...${NC}"
+    log "Adicionando repositório CloudStack"
+    
+    # Define a URL do repositório conforme a documentação oficial
+    local repo_url="https://download.cloudstack.org/ubuntu"
+    local repo_line="deb $repo_url $ubuntu_version 4.20"
+    
+    # Escreve a configuração do repositório
+    echo "$repo_line" > /etc/apt/sources.list.d/cloudstack.list
+    
+    echo -e "${GREEN}Repositório CloudStack adicionado com sucesso.${NC}"
+    log "Repositório CloudStack adicionado com sucesso"
+    
+    # Atualiza os repositórios
+    echo -e "${BLUE}Atualizando repositórios...${NC}"
+    log "Atualizando repositórios"
+    
+    if ! safe_apt_get update; then
+        echo -e "${YELLOW}Falha ao atualizar repositórios. Tentando método alternativo...${NC}"
+        log "Falha ao atualizar repositórios. Tentando método alternativo."
+        
+        # Tenta atualizar ignorando erros de assinatura
+        if ! safe_apt_get update --allow-unauthenticated; then
+            echo -e "${RED}Falha ao atualizar repositórios mesmo com --allow-unauthenticated.${NC}"
+            log "Falha ao atualizar repositórios mesmo com --allow-unauthenticated"
+            
+            # Pergunta ao usuário se deseja continuar
+            read -p "Falha ao atualizar repositórios. Deseja continuar mesmo assim? (s/n) " -n 1 -r
+            echo
+            
+            if [[ ! $REPLY =~ ^[Ss]$ ]]; then
+                echo -e "${RED}Instalação cancelada pelo usuário.${NC}"
+                log "Instalação cancelada pelo usuário após falha ao atualizar repositórios"
+                exit 1
+            else
+                echo -e "${YELLOW}Continuando mesmo com falha ao atualizar repositórios.${NC}"
+                log "Usuário optou por continuar mesmo com falha ao atualizar repositórios"
+            fi
+        else
+            echo -e "${GREEN}Repositórios atualizados com sucesso usando --allow-unauthenticated.${NC}"
+            log "Repositórios atualizados com sucesso usando --allow-unauthenticated"
+        fi
+    else
+        echo -e "${GREEN}Repositórios atualizados com sucesso.${NC}"
+        log "Repositórios atualizados com sucesso"
+    fi
+}
+
+# Detecta a versão do Ubuntu
+detect_ubuntu_version() {
+    echo -e "${BLUE}Detectando versão do Ubuntu...${NC}"
+    log "Detectando versão do Ubuntu"
+    
+    # Obtém a versão do Ubuntu
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_VERSION=$VERSION_ID
+        OS_CODENAME=$UBUNTU_CODENAME
+        
+        echo -e "${GREEN}Versão do Ubuntu detectada: $OS_VERSION ($OS_CODENAME)${NC}"
+        log "Versão do Ubuntu detectada: $OS_VERSION ($OS_CODENAME)"
+        
+        # Determina o nome da distribuição para o repositório CloudStack
+        case $OS_CODENAME in
+            focal)
+                # Ubuntu 20.04
+                CLOUDSTACK_DIST="focal"
+                ;;
+            jammy)
+                # Ubuntu 22.04
+                CLOUDSTACK_DIST="jammy"
+                ;;
+            noble)
+                # Ubuntu 24.04
+                CLOUDSTACK_DIST="noble"
+                ;;
+            *)
+                # Fallback para focal
+                echo -e "${YELLOW}Versão do Ubuntu não reconhecida. Usando 'focal' como fallback.${NC}"
+                log "Versão do Ubuntu não reconhecida. Usando 'focal' como fallback"
+                CLOUDSTACK_DIST="focal"
+                ;;
+        esac
+        
+        echo -e "${GREEN}Distribuição para repositório CloudStack: $CLOUDSTACK_DIST${NC}"
+        log "Distribuição para repositório CloudStack: $CLOUDSTACK_DIST"
+    else
+        echo -e "${RED}Não foi possível detectar a versão do Ubuntu.${NC}"
+        log "Não foi possível detectar a versão do Ubuntu"
+        exit 1
+    fi
+}
+
+# Detecta a versão do Ubuntu
+detect_ubuntu_version
+
+# Configura o repositório CloudStack
+echo -e "\n${BLUE}=== Configurando repositório CloudStack ===${NC}"
+log "Configurando repositório CloudStack para $OS_CODENAME"
+
+# Adiciona o repositório CloudStack
+add_cloudstack_repo "$CLOUDSTACK_DIST"
+
+# Função para instalar pacotes do CloudStack
+install_cloudstack_packages() {
+    echo -e "${BLUE}Instalando pacotes do CloudStack...${NC}"
+    log "Instalando pacotes do CloudStack"
+    
+    # Verifica se o repositório foi adicionado corretamente
+    if [ ! -f /etc/apt/sources.list.d/cloudstack.list ]; then
+        echo -e "${RED}Repositório CloudStack não encontrado. Verifique a configuração.${NC}"
+        log "Repositório CloudStack não encontrado"
+        return 1
+    fi
+    
+    # Atualiza os repositórios novamente para garantir
+    echo -e "${BLUE}Atualizando repositórios...${NC}"
+    log "Atualizando repositórios"
+    
+    if ! safe_apt_get update; then
+        echo -e "${YELLOW}Falha ao atualizar repositórios. Tentando método alternativo...${NC}"
+        log "Falha ao atualizar repositórios. Tentando método alternativo"
+        
+        # Tenta atualizar ignorando erros de assinatura
+        if ! safe_apt_get update --allow-unauthenticated; then
+            echo -e "${RED}Falha ao atualizar repositórios mesmo com --allow-unauthenticated.${NC}"
+            log "Falha ao atualizar repositórios mesmo com --allow-unauthenticated"
+            
+            # Pergunta ao usuário se deseja continuar
+            read -p "Falha ao atualizar repositórios. Deseja continuar com a instalação? (s/n) " -n 1 -r
+            echo
+            
+            if [[ ! $REPLY =~ ^[Ss]$ ]]; then
+                echo -e "${RED}Instalação cancelada pelo usuário.${NC}"
+                log "Instalação cancelada pelo usuário após falha ao atualizar repositórios"
+                return 1
+            fi
+        fi
+    fi
+    
+    # Lista de pacotes CloudStack a serem instalados
+    local packages=(
+        "cloudstack-management"
+        "cloudstack-usage"
+        "cloudstack-common"
+        "cloudstack-agent"
+        "cloudstack-ui"
+    )
+    
+    # Tenta instalar todos os pacotes de uma vez
+    echo -e "${BLUE}Instalando pacotes CloudStack...${NC}"
+    log "Instalando pacotes CloudStack"
+    
+    if ! safe_apt_get install -y "${packages[@]}"; then
+        echo -e "${YELLOW}Falha ao instalar pacotes CloudStack em grupo. Tentando instalar individualmente...${NC}"
+        log "Falha ao instalar pacotes CloudStack em grupo. Tentando instalar individualmente"
+        
+        # Instala pacotes individualmente
+        local failed_packages=()
+        for package in "${packages[@]}"; do
+            echo -e "${BLUE}Instalando $package...${NC}"
+            log "Instalando $package"
+            
+            if ! safe_apt_get install -y "$package"; then
+                echo -e "${YELLOW}Falha ao instalar $package. Tentando com --allow-unauthenticated...${NC}"
+                log "Falha ao instalar $package. Tentando com --allow-unauthenticated"
+                
+                if ! safe_apt_get install -y --allow-unauthenticated "$package"; then
+                    echo -e "${RED}Falha ao instalar $package mesmo com --allow-unauthenticated.${NC}"
+                    log "Falha ao instalar $package mesmo com --allow-unauthenticated"
+                    failed_packages+=("$package")
+                else
+                    echo -e "${GREEN}$package instalado com sucesso usando --allow-unauthenticated.${NC}"
+                    log "$package instalado com sucesso usando --allow-unauthenticated"
+                fi
+            else
+                echo -e "${GREEN}$package instalado com sucesso.${NC}"
+                log "$package instalado com sucesso"
+            fi
+        done
+        
+        # Verifica se algum pacote falhou
+        if [ ${#failed_packages[@]} -gt 0 ]; then
+            echo -e "${RED}Os seguintes pacotes não puderam ser instalados:${NC}"
+            for package in "${failed_packages[@]}"; do
+                echo -e "${RED}- $package${NC}"
+            done
+            
+            # Pergunta ao usuário se deseja continuar
+            read -p "Alguns pacotes não puderam ser instalados. Deseja continuar com a instalação? (s/n) " -n 1 -r
+            echo
+            
+            if [[ ! $REPLY =~ ^[Ss]$ ]]; then
+                echo -e "${RED}Instalação cancelada pelo usuário.${NC}"
+                log "Instalação cancelada pelo usuário após falha ao instalar alguns pacotes"
+                return 1
+            fi
+        fi
+    else
+        echo -e "${GREEN}Todos os pacotes CloudStack instalados com sucesso.${NC}"
+        log "Todos os pacotes CloudStack instalados com sucesso"
+    fi
+    
+    echo -e "${GREEN}Instalação dos pacotes CloudStack concluída.${NC}"
+    log "Instalação dos pacotes CloudStack concluída"
+    return 0
+}
+
+# Instala os pacotes CloudStack
+install_cloudstack_packages
 
 # Instala MySQL
 echo -e "\n${BLUE}=== Instalando MySQL ===${NC}"
@@ -947,13 +1366,6 @@ echo -e "[mysqld]" | tee /etc/mysql/mysql.conf.d/cloudstack.cnf
 systemctl restart mysql
 check_error "Falha ao configurar MySQL"
 log "MySQL configurado com sucesso"
-
-# Instala CloudStack
-echo -e "\n${BLUE}=== Instalando CloudStack ===${NC}"
-log "Instalando CloudStack"
-safe_apt_get install -y cloudstack-management cloudstack-usage cloudstack-ui cloudstack-common
-check_error "Falha ao instalar CloudStack"
-log "CloudStack instalado com sucesso"
 
 # Configura o banco de dados CloudStack
 echo -e "\n${BLUE}=== Configurando banco de dados CloudStack ===${NC}"
@@ -988,9 +1400,51 @@ log "Firewall configurado com sucesso"
 # Configura o NFS
 echo -e "\n${BLUE}=== Configurando NFS ===${NC}"
 log "Configurando NFS"
-mkdir -p /export/primary
-mkdir -p /export/secondary
-echo "/export *(rw,async,no_root_squash,no_subtree_check)" | tee -a /etc/exports
+
+# Função para configurar corretamente as permissões dos diretórios NFS
+configure_nfs_permissions() {
+    echo -e "${BLUE}Configurando permissões dos diretórios NFS...${NC}"
+    log "Configurando permissões dos diretórios NFS"
+    
+    # Cria os diretórios de exportação se não existirem
+    mkdir -p /export/primary
+    mkdir -p /export/secondary
+    
+    # Define as permissões corretas
+    chmod 777 /export/primary
+    chmod 777 /export/secondary
+    
+    # Define o proprietário para o usuário nobody e grupo nogroup (padrão para NFS)
+    chown nobody:nogroup /export/primary
+    chown nobody:nogroup /export/secondary
+    
+    # Adiciona a configuração ao arquivo exports
+    if ! grep -q "/export" /etc/exports; then
+        echo "/export *(rw,async,no_root_squash,no_subtree_check)" | tee -a /etc/exports
+        echo -e "${GREEN}Configuração adicionada ao arquivo /etc/exports${NC}"
+        log "Configuração adicionada ao arquivo /etc/exports"
+    fi
+    
+    # Recarrega a configuração do NFS
+    exportfs -ra
+    
+    # Reinicia o serviço NFS
+    echo -e "${BLUE}Reiniciando serviço NFS...${NC}"
+    log "Reiniciando serviço NFS"
+    
+    if ! systemctl restart nfs-server; then
+        echo -e "${RED}Falha ao reiniciar o serviço NFS.${NC}"
+        log "Falha ao reiniciar o serviço NFS"
+        return 1
+    fi
+    
+    echo -e "${GREEN}Permissões dos diretórios NFS configuradas com sucesso.${NC}"
+    log "Permissões dos diretórios NFS configuradas com sucesso"
+    return 0
+}
+
+# Configura as permissões dos diretórios NFS
+configure_nfs_permissions
 
 # Instala o servidor NFS com tratamento de erros aprimorado
 echo -e "${BLUE}Instalando servidor NFS...${NC}"
@@ -1009,50 +1463,96 @@ if ! safe_apt_get install -y nfs-kernel-server; then
     fi
 fi
 
-# Reinicia o serviço NFS
-echo -e "${BLUE}Reiniciando serviço NFS...${NC}"
-log "Reiniciando serviço NFS"
-if ! service nfs-kernel-server restart; then
-    echo -e "${RED}Falha ao reiniciar o serviço NFS.${NC}"
-    log "Falha ao reiniciar o serviço NFS"
-    echo -e "${YELLOW}Tentando método alternativo...${NC}"
-    log "Tentando método alternativo para reiniciar o serviço NFS"
-    systemctl restart nfs-kernel-server
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Erro: Falha ao reiniciar NFS${NC}"
-        log "Falha ao reiniciar NFS usando método alternativo"
-        echo -e "${YELLOW}Verifique os logs para mais detalhes.${NC}"
-        exit 1
-    fi
-fi
-
 # Cria diretórios de montagem e monta os compartilhamentos NFS
 mkdir -p /mnt/primary
 mkdir -p /mnt/secondary
 echo -e "${BLUE}Montando compartilhamentos NFS...${NC}"
 log "Montando compartilhamentos NFS"
-if ! mount -t nfs localhost:/export/primary /mnt/primary; then
-    echo -e "${RED}Falha ao montar /export/primary em /mnt/primary.${NC}"
-    log "Falha ao montar /export/primary em /mnt/primary"
-    echo -e "${YELLOW}Verifique se o serviço NFS está funcionando corretamente.${NC}"
-fi
-if ! mount -t nfs localhost:/export/secondary /mnt/secondary; then
-    echo -e "${RED}Falha ao montar /export/secondary em /mnt/secondary.${NC}"
-    log "Falha ao montar /export/secondary em /mnt/secondary"
-    echo -e "${YELLOW}Verifique se o serviço NFS está funcionando corretamente.${NC}"
-fi
+
+# Tenta montar com várias tentativas
+MAX_RETRIES=3
+RETRY_COUNT=0
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if mount -t nfs localhost:/export/primary /mnt/primary; then
+        echo -e "${GREEN}/export/primary montado com sucesso em /mnt/primary.${NC}"
+        log "/export/primary montado com sucesso em /mnt/primary"
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            echo -e "${YELLOW}Tentativa $RETRY_COUNT falhou. Reconfigurando NFS e tentando novamente...${NC}"
+            log "Tentativa $RETRY_COUNT falhou. Reconfigurando NFS e tentando novamente"
+            configure_nfs_permissions
+            sleep 5
+        else
+            echo -e "${RED}Falha ao montar /export/primary em /mnt/primary após $MAX_RETRIES tentativas.${NC}"
+            log "Falha ao montar /export/primary em /mnt/primary após $MAX_RETRIES tentativas"
+            echo -e "${YELLOW}Verifique se o serviço NFS está funcionando corretamente.${NC}"
+        fi
+    fi
+done
+
+# Reinicia o contador para o segundo compartilhamento
+RETRY_COUNT=0
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if mount -t nfs localhost:/export/secondary /mnt/secondary; then
+        echo -e "${GREEN}/export/secondary montado com sucesso em /mnt/secondary.${NC}"
+        log "/export/secondary montado com sucesso em /mnt/secondary"
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            echo -e "${YELLOW}Tentativa $RETRY_COUNT falhou. Reconfigurando NFS e tentando novamente...${NC}"
+            log "Tentativa $RETRY_COUNT falhou. Reconfigurando NFS e tentando novamente"
+            sleep 5
+        else
+            echo -e "${RED}Falha ao montar /export/secondary em /mnt/secondary após $MAX_RETRIES tentativas.${NC}"
+            log "Falha ao montar /export/secondary em /mnt/secondary após $MAX_RETRIES tentativas"
+            echo -e "${YELLOW}Verifique se o serviço NFS está funcionando corretamente.${NC}"
+        fi
+    fi
+done
+
 log "NFS configurado com sucesso"
 
 # Adiciona montagens NFS ao fstab
 echo -e "\n${BLUE}=== Adicionando montagens NFS ao fstab ===${NC}"
 log "Adicionando montagens NFS ao fstab"
 if ! grep -q "/export/primary" /etc/fstab; then
-    echo "localhost:/export/primary /mnt/primary nfs rw,soft,intr 0 0" >> /etc/fstab
+    echo "localhost:/export/primary /mnt/primary nfs rw,async,intr 0 0" >> /etc/fstab
 fi
 if ! grep -q "/export/secondary" /etc/fstab; then
-    echo "localhost:/export/secondary /mnt/secondary nfs rw,soft,intr 0 0" >> /etc/fstab
+    echo "localhost:/export/secondary /mnt/secondary nfs rw,async,intr 0 0" >> /etc/fstab
 fi
 log "Montagens NFS adicionadas ao fstab"
+
+# Função para adicionar o domínio download.cloudstack.org ao arquivo /etc/hosts com o IP 79.127.208.169 para garantir a resolução DNS.
+add_cloudstack_repo_to_hosts() {
+    echo -e "${BLUE}Adicionando download.cloudstack.org ao arquivo hosts...${NC}"
+    log "Adicionando download.cloudstack.org ao arquivo hosts"
+    
+    # Verifica se já existe uma entrada para download.cloudstack.org
+    if grep -q "download.cloudstack.org" /etc/hosts; then
+        echo -e "${GREEN}Entrada para download.cloudstack.org já existe no arquivo hosts.${NC}"
+        log "Entrada para download.cloudstack.org já existe no arquivo hosts"
+        return 0
+    fi
+    
+    # Adiciona a entrada para download.cloudstack.org
+    echo "79.127.208.169 download.cloudstack.org" >> /etc/hosts
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Entrada para download.cloudstack.org adicionada com sucesso ao arquivo hosts.${NC}"
+        log "Entrada para download.cloudstack.org adicionada com sucesso ao arquivo hosts"
+    else
+        echo -e "${RED}Falha ao adicionar entrada para download.cloudstack.org ao arquivo hosts.${NC}"
+        log "Falha ao adicionar entrada para download.cloudstack.org ao arquivo hosts"
+        return 1
+    fi
+}
+
+# Adiciona o domínio download.cloudstack.org ao arquivo /etc/hosts
+add_cloudstack_repo_to_hosts
 
 # Finaliza a instalação
 echo -e "\n${GREEN}=== Instalação concluída com sucesso! ===${NC}"
@@ -1071,8 +1571,11 @@ do
 done
 echo "]"
 
+# Obtém o IP do servidor para exibir a URL de acesso
+IP_ACCESS=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0.1" | head -n 1)
+
 echo -e "\n${BLUE}=== Informações de Acesso ===${NC}"
-echo -e "URL: ${GREEN}http://$IP_SERVER:8080/client${NC}"
+echo -e "URL: ${GREEN}http://$IP_ACCESS:8080/client${NC}"
 echo -e "Usuário: ${GREEN}admin${NC}"
 echo -e "Senha: ${GREEN}password${NC}"
 echo -e "\n${YELLOW}Nota: Por motivos de segurança, altere a senha padrão após o primeiro login.${NC}"
