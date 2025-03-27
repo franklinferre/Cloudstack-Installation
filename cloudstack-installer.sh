@@ -716,7 +716,7 @@ network:
       dhcp6: no
   bridges:
     cloudbr0:
-      interfaces: eno1
+      interfaces: [eno1]
       addresses: [$IP_SERVER/24]
       routes:
         - to: default
