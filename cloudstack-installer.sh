@@ -433,33 +433,50 @@ fi
 
 # Função para detectar a interface de rede principal
 detect_network_interface() {
-    # Tenta encontrar a interface principal que está ativa e tem um endereço IP
-    local main_interface=$(ip -o -4 route show to default | awk '{print $5}' | head -n1)
+    log "Detectando interface de rede"
     
-    # Se não encontrar uma interface com rota padrão, tenta listar todas as interfaces (exceto lo)
-    if [ -z "$main_interface" ]; then
-        main_interface=$(ip -o -4 addr | awk '{print $2}' | grep -v "lo" | head -n 1 | cut -d':' -f1)
+    # Tenta encontrar a interface com a rota padrão
+    IFACE=$(ip -o -4 route show to default | awk '{print $5}' | head -n 1)
+    
+    # Se não encontrar, tenta detectar interfaces ativas
+    if [ -z "$IFACE" ]; then
+        echo -e "${YELLOW}Interface de rede não encontrada. Tentando detectar...${NC}"
+        log "Interface de rede não encontrada. Tentando detectar..."
         
-        if [ -z "$main_interface" ]; then
-            echo -e "${YELLOW}Interface de rede não encontrada. Tentando detectar...${NC}"
-            log "Interface de rede não encontrada. Tentando detectar..."
-            IFACE=$(ip -o -4 addr | awk '{print $2}' | grep -v "lo" | head -n 1 | cut -d':' -f1)
-            
-            if [ -z "$IFACE" ]; then
-                echo -e "${RED}Não foi possível detectar a interface de rede. Por favor, especifique manualmente.${NC}"
-                log "Não foi possível detectar a interface de rede"
-                read -p "Nome da interface de rede (ex: eth0, ens3): " IFACE
-                
-                if [ -z "$IFACE" ]; then
-                    echo -e "${RED}Nenhuma interface especificada. Não é possível configurar a rede.${NC}"
-                    log "Nenhuma interface especificada. Não é possível configurar a rede"
-                    return 1
-                fi
+        # Lista de possíveis nomes de interfaces
+        POSSIBLE_IFACES=$(ip -o -4 addr | awk '{print $2}' | grep -v "lo" | cut -d':' -f1)
+        
+        # Tenta encontrar a primeira interface ativa
+        for iface in $POSSIBLE_IFACES; do
+            if ip link show $iface | grep -q 'state UP'; then
+                IFACE=$iface
+                break
             fi
+        done
+    fi
+    
+    # Se ainda não encontrar, pega a primeira interface que não seja loopback
+    if [ -z "$IFACE" ]; then
+        IFACE=$(ip -o -4 addr | awk '{print $2}' | grep -v "lo" | head -n 1 | cut -d':' -f1)
+    fi
+    
+    # Verifica se encontrou uma interface
+    if [ -z "$IFACE" ]; then
+        echo -e "${RED}Não foi possível detectar a interface de rede. Por favor, especifique manualmente.${NC}"
+        log "Não foi possível detectar a interface de rede"
+        read -p "Nome da interface de rede (ex: eth0, ens3, eno1): " IFACE
+        
+        if [ -z "$IFACE" ]; then
+            echo -e "${RED}Nenhuma interface especificada. Não é possível configurar a rede.${NC}"
+            log "Nenhuma interface especificada. Não é possível configurar a rede"
+            return 1
         fi
     fi
     
-    echo "$main_interface"
+    echo -e "${BLUE}Interface de rede detectada: $IFACE${NC}"
+    log "Interface de rede detectada: $IFACE"
+    
+    return 0
 }
 
 # Detecta a interface de rede no início do script
@@ -669,6 +686,14 @@ configure_network() {
     echo -e "${BLUE}Interface de rede detectada: $IFACE${NC}"
     log "Interface de rede detectada: $IFACE"
     
+    # Verifica se a interface de rede está ativa
+    if ! ip link show $IFACE | grep -q 'state UP'; then
+        echo -e "${RED}A interface de rede $IFACE não está ativa.${NC}"
+        log "A interface de rede $IFACE não está ativa"
+        return 1
+    fi
+
+
     # Cria o arquivo de configuração do Netplan
     local netplan_file="/etc/netplan/01-cloudstack-config.yaml"
     
@@ -686,13 +711,12 @@ network:
   version: 2
   renderer: networkd
   ethernets:
-    # Substitua pela sua interface física real
-    $IFACE:
+    eno1:
       dhcp4: no
       dhcp6: no
   bridges:
     cloudbr0:
-      interfaces: [$IFACE]  # A interface física deve estar aqui
+      interfaces: eno1
       addresses: [$IP_SERVER/24]
       routes:
         - to: default
@@ -704,10 +728,6 @@ network:
         forward-delay: 0
       dhcp4: no
       dhcp6: no
-      # VLAN para datacenter $DC_CODE conforme regra_nomes.md
-      # Cada DC recebe um bloco contínuo de 25 VLAN IDs
-      # oli: 3001-3025, iga: 3026-3050, jpa: 3051-3075, 
-      # rec: 3076-3100, spo: 3101-3125, hsp: 3126-3150
 EOF
 
     # Adiciona comentário sobre VLANs conforme o datacenter
@@ -777,80 +797,6 @@ systemctl status nfs-kernel-server --no-pager
 
 echo -e "\n${GREEN}=== Instalação do CloudStack 4.20.0.0 concluída! ===${NC}"
 log "Processo de instalação finalizado"
-
-# Função para verificar e corrigir permissões do arquivo de configuração do Netplan
-fix_netplan_permissions() {
-    echo -e "${BLUE}Verificando permissões dos arquivos de configuração do Netplan...${NC}"
-    log "Verificando permissões dos arquivos de configuração do Netplan"
-    
-    # Procura por arquivos de configuração do Netplan
-    local netplan_files=$(find /etc/netplan -name "*.yaml" -type f 2>/dev/null)
-    
-    if [ -z "$netplan_files" ]; then
-        echo -e "${YELLOW}Nenhum arquivo de configuração do Netplan encontrado.${NC}"
-        log "Nenhum arquivo de configuração do Netplan encontrado"
-        return 0
-    fi
-    
-    # Corrige as permissões de cada arquivo
-    for file in $netplan_files; do
-        local current_perms=$(stat -c "%a" "$file")
-        
-        if [ "$current_perms" != "600" ]; then
-            echo -e "${YELLOW}Corrigindo permissões do arquivo $file (de $current_perms para 600)...${NC}"
-            log "Corrigindo permissões do arquivo $file (de $current_perms para 600)"
-            
-            # Corrige as permissões
-            chmod 600 "$file"
-            
-            if [ $? -eq 0 ]; then
-                echo -e "${GREEN}Permissões do arquivo $file corrigidas com sucesso.${NC}"
-                log "Permissões do arquivo $file corrigidas com sucesso"
-            else
-                echo -e "${RED}Falha ao corrigir permissões do arquivo $file.${NC}"
-                log "Falha ao corrigir permissões do arquivo $file"
-            fi
-        else
-            echo -e "${GREEN}Permissões do arquivo $file já estão corretas (600).${NC}"
-            log "Permissões do arquivo $file já estão corretas (600)"
-        fi
-    done
-    
-    return 0
-}
-
-fix_netplan_permissions
-
-# Verifica conectividade com a internet antes de prosseguir
-echo -e "${BLUE}Verificando conectividade com a internet...${NC}"
-log "Verificando conectividade com a internet"
-check_internet_connection
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Sem conectividade com a internet. Não é possível continuar.${NC}"
-    log "Sem conectividade com a internet. Não é possível continuar."
-    exit 1
-fi
-
-# Verifica resolução DNS para download.cloudstack.org
-echo -e "${BLUE}Verificando resolução DNS para download.cloudstack.org...${NC}"
-log "Verificando resolução DNS para download.cloudstack.org"
-check_dns_resolution "download.cloudstack.org"
-if [ $? -ne 0 ]; then
-    echo -e "${YELLOW}Não foi possível resolver o domínio download.cloudstack.org.${NC}"
-    log "Não foi possível resolver o domínio download.cloudstack.org"
-    
-    read -p "Deseja continuar mesmo sem resolução DNS para download.cloudstack.org? (s/n) " -n 1 -r
-    echo
-    
-    if [[ ! $REPLY =~ ^[Ss]$ ]]; then
-        echo -e "${RED}Instalação cancelada devido à falta de resolução DNS para download.cloudstack.org.${NC}"
-        log "Instalação cancelada devido à falta de resolução DNS para download.cloudstack.org"
-        exit 1
-    else
-        echo -e "${YELLOW}Continuando sem resolução DNS para download.cloudstack.org. Algumas funcionalidades podem não funcionar corretamente.${NC}"
-        log "Usuário optou por continuar sem resolução DNS para download.cloudstack.org"
-    fi
-fi
 
 # Função para limpar repositórios CloudStack antigos
 clean_old_cloudstack_repos() {
@@ -1248,19 +1194,40 @@ safe_apt_get install -y mysql-server
 check_error "Falha ao instalar MySQL"
 log "MySQL instalado com sucesso"
 
-# Configura MySQL
-echo -e "\n${BLUE}=== Configurando MySQL ===${NC}"
-log "Configurando MySQL"
-echo -e "\nserver_id = 1\nsql-mode=\"STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION,ERROR_FOR_DIVISION_BY_ZERO,NO_ZERO_DATE,NO_ZERO_IN_DATE,NO_ENGINE_SUBSTITUTION\"\ninnodb_rollback_on_timeout=1\ninnodb_lock_wait_timeout=600\nmax_connections=1000\nlog-bin=mysql-bin\nbinlog-format = 'ROW'" | tee -a /etc/mysql/mysql.conf.d/mysqld.cnf
-echo -e "[mysqld]" | tee /etc/mysql/mysql.conf.d/cloudstack.cnf
-systemctl restart mysql
-check_error "Falha ao configurar MySQL"
-log "MySQL configurado com sucesso"
+# Verificar se o MySQL está em execução
+if ! systemctl is-active --quiet mysql; then
+  echo 'Iniciando o serviço MySQL...'
+  systemctl start mysql
+fi
+
+# Verificar credenciais do MySQL
+if ! sudo mysql -e 'SELECT 1' > /dev/null 2>&1; then
+  echo -e "${RED}ERRO: Não foi possível acessar o MySQL como root. Verificando método alternativo...${NC}"
+  log "Erro ao acessar MySQL como root. Tentando método alternativo."
+  
+  # Tenta usar o método auth_socket (padrão no Ubuntu moderno)
+  if ! sudo mysql -e "CREATE USER IF NOT EXISTS '$MYSQL_USER'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON *.* TO '$MYSQL_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" > /dev/null 2>&1; then
+    echo -e "${RED}ERRO: Não foi possível configurar o usuário MySQL. A instalação não pode continuar.${NC}"
+    log "Falha ao configurar usuário MySQL"
+    exit 1
+  else
+    echo -e "${GREEN}Usuário MySQL configurado com sucesso usando método alternativo.${NC}"
+    log "Usuário MySQL configurado com método alternativo"
+    # Define uma variável para indicar que já configuramos o usuário
+    MYSQL_USER_CONFIGURED=true
+  fi
+else
+  echo -e "${GREEN}Acesso ao MySQL verificado com sucesso.${NC}"
+  log "Acesso ao MySQL verificado com sucesso"
+fi
 
 # Configura o banco de dados CloudStack
 echo -e "\n${BLUE}=== Configurando banco de dados CloudStack ===${NC}"
 log "Configurando banco de dados CloudStack"
-cloudstack-setup-databases "$MYSQL_USER:$MYSQL_PASSWORD@localhost" --deploy-as=root:"$MYSQL_ROOT_PASSWORD"
+
+# Usa o usuário MySQL criado para configurar o banco de dados CloudStack
+echo -e "${BLUE}Executando cloudstack-setup-databases...${NC}"
+cloudstack-setup-databases $MYSQL_USER:$MYSQL_PASSWORD@localhost --deploy-as=root
 check_error "Falha ao configurar banco de dados CloudStack"
 log "Banco de dados CloudStack configurado com sucesso"
 
@@ -1443,6 +1410,64 @@ add_cloudstack_repo_to_hosts() {
 
 # Adiciona o domínio download.cloudstack.org ao arquivo /etc/hosts
 add_cloudstack_repo_to_hosts
+
+# Verificar credenciais do MySQL
+if ! sudo mysql -e 'SELECT 1' > /dev/null 2>&1; then
+  echo -e "${RED}ERRO: Não foi possível acessar o MySQL como root. Verificando método alternativo...${NC}"
+  log "Erro ao acessar MySQL como root. Tentando método alternativo."
+  
+  # Tenta usar o método auth_socket (padrão no Ubuntu moderno)
+  if ! sudo mysql -e "CREATE USER IF NOT EXISTS '$MYSQL_USER'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON *.* TO '$MYSQL_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" > /dev/null 2>&1; then
+    echo -e "${RED}ERRO: Não foi possível configurar o usuário MySQL. A instalação não pode continuar.${NC}"
+    log "Falha ao configurar usuário MySQL"
+    exit 1
+  else
+    echo -e "${GREEN}Usuário MySQL configurado com sucesso usando método alternativo.${NC}"
+    log "Usuário MySQL configurado com método alternativo"
+    # Define uma variável para indicar que já configuramos o usuário
+    MYSQL_USER_CONFIGURED=true
+  fi
+else
+  echo -e "${GREEN}Acesso ao MySQL verificado com sucesso.${NC}"
+  log "Acesso ao MySQL verificado com sucesso"
+fi
+
+echo -e "\n${BLUE}=== Configurando usuário MySQL para CloudStack ===${NC}"
+log "Configurando usuário MySQL para CloudStack"
+
+# Cria o usuário MySQL usando sudo (funciona com auth_socket no Ubuntu moderno)
+echo -e "${BLUE}Criando usuário MySQL 'cloud'...${NC}"
+if sudo mysql -e "CREATE USER IF NOT EXISTS '$MYSQL_USER'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON *.* TO '$MYSQL_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" > /dev/null 2>&1; then
+  echo -e "${GREEN}Usuário MySQL '$MYSQL_USER' criado com sucesso.${NC}"
+  log "Usuário MySQL '$MYSQL_USER' criado com sucesso"
+  MYSQL_USER_CONFIGURED=true
+else
+  echo -e "${RED}ERRO: Não foi possível criar o usuário MySQL '$MYSQL_USER'.${NC}"
+  log "ERRO: Não foi possível criar o usuário MySQL '$MYSQL_USER'"
+  
+  # Tenta método alternativo com senha root
+  echo -e "${YELLOW}Tentando método alternativo usando senha root...${NC}"
+  if mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "CREATE USER IF NOT EXISTS '$MYSQL_USER'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD'; GRANT ALL PRIVILEGES ON *.* TO '$MYSQL_USER'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" > /dev/null 2>&1; then
+    echo -e "${GREEN}Usuário MySQL '$MYSQL_USER' criado com sucesso usando senha root.${NC}"
+    log "Usuário MySQL '$MYSQL_USER' criado com sucesso usando senha root"
+    MYSQL_USER_CONFIGURED=true
+  else
+    echo -e "${RED}ERRO: Falha ao criar usuário MySQL. A instalação não pode continuar.${NC}"
+    log "ERRO: Falha ao criar usuário MySQL"
+    exit 1
+  fi
+fi
+
+# Testa a conexão com o usuário criado
+echo -e "${BLUE}Testando conexão com o usuário MySQL '$MYSQL_USER'...${NC}"
+if mysql -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" -e "SELECT 'Conexao bem-sucedida' as Status;" > /dev/null 2>&1; then
+  echo -e "${GREEN}Conexão com o MySQL bem-sucedida usando o usuário '$MYSQL_USER'.${NC}"
+  log "Conexão com o MySQL bem-sucedida usando o usuário '$MYSQL_USER'"
+else
+  echo -e "${RED}ERRO: Não foi possível conectar ao MySQL com o usuário '$MYSQL_USER'.${NC}"
+  log "ERRO: Não foi possível conectar ao MySQL com o usuário '$MYSQL_USER'"
+  exit 1
+fi
 
 # Finaliza a instalação
 echo -e "\n${GREEN}=== Instalação concluída com sucesso! ===${NC}"
