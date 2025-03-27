@@ -177,14 +177,14 @@ check_dns_resolution() {
     fi
     
     # Tenta resolver usando dig
-    if command -v dig > /dev/null && dig +short "$domain" > /dev/null 2>&1; then
+    if command -v dig &> /dev/null && dig +short "$domain" > /dev/null 2>&1; then
         echo -e "${GREEN}Domínio $domain resolvido com sucesso (via dig).${NC}"
         log "Domínio $domain resolvido com sucesso (via dig)"
         return 0
     fi
     
     # Tenta resolver usando nslookup
-    if command -v nslookup > /dev/null && nslookup "$domain" > /dev/null 2>&1; then
+    if command -v nslookup &> /dev/null && nslookup "$domain" > /dev/null 2>&1; then
         echo -e "${GREEN}Domínio $domain resolvido com sucesso (via nslookup).${NC}"
         log "Domínio $domain resolvido com sucesso (via nslookup)"
         return 0
@@ -347,89 +347,39 @@ configure_timezone() {
     fi
 }
 
-# Função para configurar o hostname
 configure_hostname() {
-    echo -e "\n${BLUE}=== Configurando hostname ===${NC}"
+    echo -e "${BLUE}=== Configurando hostname ===${NC}"
     log "Configurando hostname"
-    
-    # Usa o hostname gerado pelo script
-    echo -e "${BLUE}Configurando hostname para: $FULL_HOSTNAME${NC}"
-    log "Configurando hostname para: $FULL_HOSTNAME"
-    
-    # Atualiza o hostname
-    hostnamectl set-hostname "$FULL_HOSTNAME"
-    
-    # Verifica se a configuração foi bem-sucedida
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Hostname configurado com sucesso para: $FULL_HOSTNAME${NC}"
-        log "Hostname configurado com sucesso para: $FULL_HOSTNAME"
-    else
-        echo -e "${RED}Falha ao configurar o hostname.${NC}"
-        log "Falha ao configurar o hostname"
-        return 1
-    fi
-    
-    # Atualiza o arquivo hosts após configurar o hostname
-    update_hosts
-    
-    return 0
-}
-
-# Função para atualizar o arquivo hosts
-update_hosts() {
-    echo -e "${BLUE}Atualizando arquivo hosts${NC}"
-    log "Atualizando arquivo hosts"
-    
-    # Backup do arquivo original
-    if [ -f /etc/hosts ]; then
-        cp /etc/hosts /etc/hosts.bak.$(date +%Y%m%d%H%M%S)
-    fi
     
     # Verifica se o hostname foi configurado corretamente
     if [ -z "$FULL_HOSTNAME" ] || [ "$FULL_HOSTNAME" = "." ]; then
-        echo -e "${YELLOW}FULL_HOSTNAME não está definido corretamente. Usando hostname do sistema.${NC}"
-        log "FULL_HOSTNAME não está definido corretamente. Usando hostname do sistema"
+        echo -e "${YELLOW}Hostname não definido. Usando o hostname atual.${NC}"
+        log "Hostname não definido. Usando o hostname atual"
         HOSTNAME=$(hostname -s)
         DOMAIN=$(hostname -d)
         if [ -z "$DOMAIN" ]; then
-            DOMAIN="lideri.cloud"
+            # Tenta extrair o código do datacenter do hostname atual
+            DC_CODE_FROM_HOST=$(echo "$HOSTNAME" | grep -oP '(?<=\-)([a-z]{3})(?=\.)')
+            if [ -n "$DC_CODE_FROM_HOST" ]; then
+                DOMAIN="${DC_CODE_FROM_HOST}.lideri.cloud"
+            else
+                DOMAIN="lideri.cloud"
+            fi
         fi
         FULL_HOSTNAME="${HOSTNAME}.${DOMAIN}"
     fi
     
-    # Extrai o hostname curto
-    SHORT_HOSTNAME=$(echo "$FULL_HOSTNAME" | cut -d. -f1)
+    echo -e "Configurando hostname para: ${GREEN}$FULL_HOSTNAME${NC}"
+    log "Configurando hostname para: $FULL_HOSTNAME"
     
-    # Obtém o endereço IP principal
-    local ip_server="$IP"
-    if [ -z "$ip_server" ]; then
-        ip_server=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0.1" | head -n 1)
-    fi
+    # Configura o hostname
+    hostnamectl set-hostname "$FULL_HOSTNAME"
     
-    # Verifica se existe entrada para download.cloudstack.org
-    local cloudstack_entry=""
-    if grep -q "download.cloudstack.org" /etc/hosts; then
-        cloudstack_entry=$(grep "download.cloudstack.org" /etc/hosts)
-    else
-        cloudstack_entry="79.127.208.169 download.cloudstack.org"
-    fi
+    # Atualiza o arquivo hosts
+    update_hosts
     
-    # Cria um novo arquivo hosts
-    cat > /etc/hosts << EOF
-127.0.0.1       localhost
-$ip_server      $FULL_HOSTNAME $SHORT_HOSTNAME
-
-# CloudStack Repository
-$cloudstack_entry
-
-# The following lines are desirable for IPv6 capable hosts
-::1             localhost ip6-localhost ip6-loopback
-ff02::1         ip6-allnodes
-ff02::2         ip6-allrouters
-EOF
-    
-    echo -e "${GREEN}Arquivo hosts atualizado com o hostname: $FULL_HOSTNAME ($SHORT_HOSTNAME)${NC}"
-    log "Arquivo hosts atualizado com o hostname: $FULL_HOSTNAME ($SHORT_HOSTNAME)"
+    echo -e "Hostname configurado com sucesso para: ${GREEN}$FULL_HOSTNAME${NC}"
+    log "Hostname configurado com sucesso para: $FULL_HOSTNAME"
     
     return 0
 }
@@ -526,127 +476,102 @@ echo -e "IP: ${GREEN}$IP${NC}"
 echo -e "Gateway: ${GREEN}$GATEWAY${NC}"
 echo -e "Adaptador: ${GREEN}$ADAPTER${NC}"
 
-# Configurações do Datacenter e Cluster (Lideri.cloud)
-echo -e "\n${BLUE}=== Configurações de Datacenter e Cluster (Lideri.cloud) ===${NC}"
+# Configurações do Datacenter e Rack (Lideri.cloud)
+echo -e "\n${BLUE}=== Configurações de Datacenter e Rack (Lideri.cloud) ===${NC}"
 echo -e "${YELLOW}Selecione o datacenter:${NC}"
 echo -e "1) Olinda (OLI) - 10.128.0.0/16"
 echo -e "2) Igarassu (IGA) - 10.129.0.0/16"
 echo -e "3) João Pessoa (JPA) - 10.130.0.0/16"
 echo -e "4) Recife (REC) - 10.131.0.0/16"
-echo -e "5) São Paulo (SAO) - 10.132.0.0/16"
+echo -e "5) São Paulo (SPO) - 10.132.0.0/16"
 echo -e "6) Hostinger SP (HSP) - 10.133.0.0/16"
 read -p "Escolha o datacenter [1]: " DC_CHOICE
 DC_CHOICE=${DC_CHOICE:-1}
 
+# Garante que DC_CHOICE seja um número válido
+if ! [[ "$DC_CHOICE" =~ ^[1-6]$ ]]; then
+    echo -e "${YELLOW}Opção inválida. Usando o padrão (Olinda).${NC}"
+    DC_CHOICE=1
+fi
+
 case $DC_CHOICE in
-    1) DC_CODE="oli"; DC_NAME="Olinda"; DC_OCTET=128 ;;
-    2) DC_CODE="iga"; DC_NAME="Igarassu"; DC_OCTET=129 ;;
-    3) DC_CODE="jpa"; DC_NAME="João Pessoa"; DC_OCTET=130 ;;
-    4) DC_CODE="rec"; DC_NAME="Recife"; DC_OCTET=131 ;;
-    5) DC_CODE="spo"; DC_NAME="São Paulo"; DC_OCTET=132 ;;
-    6) DC_CODE="hsp"; DC_NAME="Hostinger SP"; DC_OCTET=133 ;;
-    *) DC_CODE="oli"; DC_NAME="Olinda"; DC_OCTET=128 ;;
+    1) DC_NAME="Olinda"; DC_CODE="oli"; DC_OCTET=128 ;;
+    2) DC_NAME="Igarassu"; DC_CODE="iga"; DC_OCTET=129 ;;
+    3) DC_NAME="João Pessoa"; DC_CODE="jpa"; DC_OCTET=130 ;;
+    4) DC_NAME="Recife"; DC_CODE="rec"; DC_OCTET=131 ;;
+    5) DC_NAME="São Paulo"; DC_CODE="spo"; DC_OCTET=132 ;;
+    6) DC_NAME="Hostinger SP"; DC_CODE="hsp"; DC_OCTET=133 ;;
+    *) DC_NAME="Olinda"; DC_CODE="oli"; DC_OCTET=128 ;;
 esac
 
 echo -e "Datacenter selecionado: ${GREEN}$DC_NAME ($DC_CODE)${NC}"
 
-# Seleciona o Cluster
-echo -e "${YELLOW}Selecione o nome do cluster:${NC}"
-echo -e "1) bravo"
-echo -e "2) sierra"
-echo -e "3) delta"
-echo -e "4) charlie"
-echo -e "5) echo"
-read -p "Escolha o cluster [1]: " CLUSTER_NAME_CHOICE
-CLUSTER_NAME_CHOICE=${CLUSTER_NAME_CHOICE:-1}
+# Seleciona o Rack
+echo -e "${YELLOW}Selecione o rack:${NC}"
+echo -e "1) Rack 01 (r01)"
+echo -e "2) Rack 02 (r02)"
+echo -e "3) Rack 03 (r03)"
+echo -e "4) Rack 04 (r04)"
+echo -e "5) Rack 05 (r05)"
+read -p "Escolha o rack [1]: " RACK_CHOICE
+RACK_CHOICE=${RACK_CHOICE:-1}
 
-# Garante que CLUSTER_NAME_CHOICE seja um número válido
-if ! [[ "$CLUSTER_NAME_CHOICE" =~ ^[1-5]$ ]]; then
-    echo -e "${YELLOW}Opção inválida. Usando o padrão (bravo).${NC}"
-    CLUSTER_NAME_CHOICE=1
+# Garante que RACK_CHOICE seja um número válido
+if ! [[ "$RACK_CHOICE" =~ ^[1-5]$ ]]; then
+    echo -e "${YELLOW}Opção inválida. Usando o padrão (r01).${NC}"
+    RACK_CHOICE=1
 fi
 
-case $CLUSTER_NAME_CHOICE in
-    1) CLUSTER_NAME="bravo" ;;
-    2) CLUSTER_NAME="sierra" ;;
-    3) CLUSTER_NAME="delta" ;;
-    4) CLUSTER_NAME="charlie" ;;
-    5) CLUSTER_NAME="echo" ;;
-    *) CLUSTER_NAME="bravo" ;;
+case $RACK_CHOICE in
+    1) RACK_NUM="01"; RACK_NAME="r01" ;;
+    2) RACK_NUM="02"; RACK_NAME="r02" ;;
+    3) RACK_NUM="03"; RACK_NAME="r03" ;;
+    4) RACK_NUM="04"; RACK_NAME="r04" ;;
+    5) RACK_NUM="05"; RACK_NAME="r05" ;;
+    *) RACK_NUM="01"; RACK_NAME="r01" ;;
 esac
 
-read -p "Número do Cluster (01-16) [01]: " CLUSTER_NUM
-CLUSTER_NUM=${CLUSTER_NUM:-01}
+# Seleciona o Host
+read -p "Número do Host (01-16) [01]: " HOST_NUM
+HOST_NUM=${HOST_NUM:-01}
 
-# Garante que CLUSTER_NUM seja um número válido
-if ! [[ "$CLUSTER_NUM" =~ ^[0-9]+$ ]]; then
-    echo -e "${YELLOW}Número de cluster inválido. Usando o padrão (01).${NC}"
-    CLUSTER_NUM=01
+# Garante que HOST_NUM seja um número válido
+if ! [[ "$HOST_NUM" =~ ^[0-9]+$ ]] || [ "$HOST_NUM" -lt 1 ] || [ "$HOST_NUM" -gt 16 ]; then
+    echo -e "${YELLOW}Número de host inválido. Usando o padrão (01).${NC}"
+    HOST_NUM=01
 fi
 
-CLUSTER_NUM=$(printf "%02d" $((10#${CLUSTER_NUM})))
+HOST_NUM=$(printf "%02d" $((10#${HOST_NUM})))
 
-# Calcula o terceiro octeto base para o cluster
-CLUSTER_ID=$((10#${CLUSTER_NUM}))
-if [ $CLUSTER_ID -lt 1 ] || [ $CLUSTER_ID -gt 16 ]; then
-    echo -e "${YELLOW}Número de cluster inválido. Usando o padrão (01).${NC}"
-    CLUSTER_ID=1
-    CLUSTER_NUM="01"
-fi
-# Cálculo correto: clusters começam em 16, 32, 48, etc. (incrementos de 16)
-THIRD_OCTET=$(((($CLUSTER_ID-1)*16) + 16))
-
-# Seleciona o Servidor
-read -p "Número do Servidor (01-16) [01]: " SERVER_NUM
-SERVER_NUM=${SERVER_NUM:-01}
-
-# Garante que SERVER_NUM seja um número válido
-if ! [[ "$SERVER_NUM" =~ ^[0-9]+$ ]]; then
-    echo -e "${YELLOW}Número de servidor inválido. Usando o padrão (01).${NC}"
-    SERVER_NUM=01
-fi
-
-SERVER_NUM=$(printf "%02d" $((10#$SERVER_NUM)))
-
-# Calcula o IP com base nas regras da Lideri.cloud
-SERVER_ID=$((10#$SERVER_NUM))
-if [ $SERVER_ID -lt 1 ] || [ $SERVER_ID -gt 16 ]; then
-    echo -e "${YELLOW}Número de servidor inválido. Usando o padrão (01).${NC}"
-    SERVER_ID=1
-    SERVER_NUM="01"
-fi
-
-# Calcula o IP do servidor - o terceiro octeto é baseado no cluster e no número do servidor
-# Para o servidor 01 do cluster 01, seria 10.128.16.0/24
-# Para o servidor 02 do cluster 01, seria 10.128.17.0/24
-SERVER_OCTET=$((THIRD_OCTET + SERVER_ID - 1))
-
-# Calcula os IPs para a rede do servidor
-IP_NETWORK="10.$DC_OCTET.$SERVER_OCTET.0/24"
-IP_GATEWAY="10.$DC_OCTET.$SERVER_OCTET.1"
-# Servidores DNS anycast da cloud completa
-IP_DNS1="186.208.0.1"
-IP_DNS2="186.208.0.2"
-IP_DHCP="10.$DC_OCTET.$SERVER_OCTET.4"
-IP_MGMT="10.$DC_OCTET.$SERVER_OCTET.5"
-IP_SERVER="10.$DC_OCTET.$SERVER_OCTET.6"
-
-# Calcula o IP de gerenciamento (iDRAC, iLO, etc.) no bloco 10.DC.0.0/24
-MGMT_IP="10.$DC_OCTET.0.$SERVER_ID"
-
-# Configurações do host
-echo -e "\n${BLUE}=== Configurações do Host ===${NC}"
-echo -e "${YELLOW}Seguindo padrão de nomenclatura Lideri.cloud${NC}"
-
-# Gera o nome do host conforme padrão <cluster><num>-node<num>-<subdomínio>.<domínio>
-HOSTNAME="${CLUSTER_NAME}${CLUSTER_NUM}-node${SERVER_NUM}-${DC_CODE}"
+# Gera o nome do host conforme padrão <rack>-<host>.<dc>.lideri.cloud
+HOSTNAME="${RACK_NAME}-h${HOST_NUM}"
 echo -e "Nome do Host: ${GREEN}$HOSTNAME${NC}"
 
-read -p "Domínio [lideri.cloud]: " DOMAIN
-DOMAIN=${DOMAIN:-lideri.cloud}
+# Define o domínio conforme o datacenter
+DOMAIN="${DC_CODE}.lideri.cloud"
 
 FULL_HOSTNAME="${HOSTNAME}.${DOMAIN}"
+SHORT_HOSTNAME="${HOSTNAME}"
+
 echo -e "Nome completo do host: ${GREEN}$FULL_HOSTNAME${NC}"
+
+# Calcula o IP com base nas regras da Lideri.cloud
+# Para hosts, usamos a rede .1.0/24 conforme as regras
+# Hosts começam em .11 e vão até .254
+HOST_IP_OCTET=$((10 + 10#${HOST_NUM}))
+
+# Calcula os IPs para a rede do servidor conforme regra_nomes.md
+IP_NETWORK="10.$DC_OCTET.1.0/24"
+IP_SERVER="10.$DC_OCTET.1.$HOST_IP_OCTET"
+IP_GATEWAY="10.$DC_OCTET.1.1"
+IP_DNS1="10.$DC_OCTET.1.2"  # DNS Anycast primário
+IP_DNS2="10.$DC_OCTET.1.3"  # DNS Anycast secundário
+
+# IP de gerenciamento (iDRAC/iLO) na rede Management
+MGMT_IP="10.$DC_OCTET.0.$HOST_IP_OCTET"
+
+echo -e "IP do Servidor: ${GREEN}$IP_SERVER${NC}"
+echo -e "IP de Gerenciamento: ${GREEN}$MGMT_IP${NC}"
 
 # Configurações do MySQL
 echo -e "\n${BLUE}=== Configurações do MySQL ===${NC}"
@@ -665,8 +590,7 @@ MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-cloudstack}
 echo -e "\n${BLUE}=== Resumo da Instalação ===${NC}"
 echo -e "Sistema: ${GREEN}$OS_TYPE $OS_VERSION${NC}"
 echo -e "Datacenter: ${GREEN}$DC_NAME ($DC_CODE)${NC}"
-echo -e "Cluster: ${GREEN}${CLUSTER_NAME}${CLUSTER_NUM}${NC}"
-echo -e "Servidor: ${GREEN}node${SERVER_NUM}${NC}"
+echo -e "Rack: ${GREEN}$RACK_NAME${NC}"
 echo -e "Host: ${GREEN}$FULL_HOSTNAME${NC}"
 echo -e "Rede: ${GREEN}$IP_NETWORK${NC}"
 echo -e "IP do Servidor: ${GREEN}$IP_SERVER${NC}"
@@ -780,7 +704,33 @@ network:
         forward-delay: 0
       dhcp4: no
       dhcp6: no
+      # VLAN para datacenter $DC_CODE conforme regra_nomes.md
+      # Cada DC recebe um bloco contínuo de 25 VLAN IDs
+      # oli: 3001-3025, iga: 3026-3050, jpa: 3051-3075, 
+      # rec: 3076-3100, spo: 3101-3125, hsp: 3126-3150
 EOF
+
+    # Adiciona comentário sobre VLANs conforme o datacenter
+    case $DC_CODE in
+        oli)
+            echo "      # VLANs para Olinda: 3001-3025" >> "$netplan_file"
+            ;;
+        iga)
+            echo "      # VLANs para Igarassu: 3026-3050" >> "$netplan_file"
+            ;;
+        jpa)
+            echo "      # VLANs para João Pessoa: 3051-3075" >> "$netplan_file"
+            ;;
+        rec)
+            echo "      # VLANs para Recife: 3076-3100" >> "$netplan_file"
+            ;;
+        spo)
+            echo "      # VLANs para São Paulo: 3101-3125" >> "$netplan_file"
+            ;;
+        hsp)
+            echo "      # VLANs para Hostinger SP: 3126-3150" >> "$netplan_file"
+            ;;
+    esac
     
     # Define as permissões corretas para o arquivo de configuração
     chmod 600 "$netplan_file"
@@ -811,9 +761,6 @@ EOF
     
     # Corrige as permissões de todos os arquivos do Netplan
     fix_netplan_permissions
-    
-    # Atualiza o arquivo hosts
-    update_hosts
     
     return 0
 }
@@ -852,6 +799,8 @@ fix_netplan_permissions() {
         if [ "$current_perms" != "600" ]; then
             echo -e "${YELLOW}Corrigindo permissões do arquivo $file (de $current_perms para 600)...${NC}"
             log "Corrigindo permissões do arquivo $file (de $current_perms para 600)"
+            
+            # Corrige as permissões
             chmod 600 "$file"
             
             if [ $? -eq 0 ]; then
@@ -871,65 +820,6 @@ fix_netplan_permissions() {
 }
 
 fix_netplan_permissions
-
-# Função para atualizar o arquivo hosts
-update_hosts() {
-    echo -e "${BLUE}Atualizando arquivo hosts${NC}"
-    log "Atualizando arquivo hosts"
-    
-    # Backup do arquivo original
-    if [ -f /etc/hosts ]; then
-        cp /etc/hosts /etc/hosts.bak.$(date +%Y%m%d%H%M%S)
-    fi
-    
-    # Verifica se o hostname foi configurado corretamente
-    if [ -z "$FULL_HOSTNAME" ] || [ "$FULL_HOSTNAME" = "." ]; then
-        echo -e "${YELLOW}FULL_HOSTNAME não está definido corretamente. Usando hostname do sistema.${NC}"
-        log "FULL_HOSTNAME não está definido corretamente. Usando hostname do sistema"
-        HOSTNAME=$(hostname -s)
-        DOMAIN=$(hostname -d)
-        if [ -z "$DOMAIN" ]; then
-            DOMAIN="lideri.cloud"
-        fi
-        FULL_HOSTNAME="${HOSTNAME}.${DOMAIN}"
-    fi
-    
-    # Extrai o hostname curto
-    SHORT_HOSTNAME=$(echo "$FULL_HOSTNAME" | cut -d. -f1)
-    
-    # Obtém o endereço IP principal
-    local ip_server="$IP"
-    if [ -z "$ip_server" ]; then
-        ip_server=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0.1" | head -n 1)
-    fi
-    
-    # Verifica se existe entrada para download.cloudstack.org
-    local cloudstack_entry=""
-    if grep -q "download.cloudstack.org" /etc/hosts; then
-        cloudstack_entry=$(grep "download.cloudstack.org" /etc/hosts)
-    else
-        cloudstack_entry="79.127.208.169 download.cloudstack.org"
-    fi
-    
-    # Cria um novo arquivo hosts
-    cat > /etc/hosts << EOF
-127.0.0.1       localhost
-$ip_server      $FULL_HOSTNAME $SHORT_HOSTNAME
-
-# CloudStack Repository
-$cloudstack_entry
-
-# The following lines are desirable for IPv6 capable hosts
-::1             localhost ip6-localhost ip6-loopback
-ff02::1         ip6-allnodes
-ff02::2         ip6-allrouters
-EOF
-    
-    echo -e "${GREEN}Arquivo hosts atualizado com o hostname: $FULL_HOSTNAME ($SHORT_HOSTNAME)${NC}"
-    log "Arquivo hosts atualizado com o hostname: $FULL_HOSTNAME ($SHORT_HOSTNAME)"
-    
-    return 0
-}
 
 # Verifica conectividade com a internet antes de prosseguir
 echo -e "${BLUE}Verificando conectividade com a internet...${NC}"
