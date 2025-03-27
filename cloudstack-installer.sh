@@ -722,7 +722,7 @@ network:
         - to: default
           via: $IP_GATEWAY
       nameservers:
-        addresses: [$IP_DNS1, $IP_DNS2]
+        addresses: [186.208.0.1, 8.8.8.8]
       parameters:
         stp: false
         forward-delay: 0
